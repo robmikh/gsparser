@@ -460,6 +460,10 @@ impl<'a> BspEntity<'a> {
         let mut entities = Vec::new();
         let mut current_entity = None;
         for line in source.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
             if line == "{" {
                 current_entity = Some(BspEntity(HashMap::new()));
             } else if line == "}" {
