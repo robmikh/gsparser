@@ -1,5 +1,5 @@
 use gsparser::{
-    demo::{parse_entry_frames, DemoDirectory, DemoHeader, Parse},
+    demo::{parse_entry_frames, DemoDirectory, DemoFrameData, DemoHeader, Parse},
     mdl::null_terminated_bytes_to_str,
 };
 
@@ -40,6 +40,36 @@ fn main() {
         for frame in frames {
             println!("    {:?}", frame.header.frame_ty);
             //println!("      {:?}", frame.data);
+        }
+    }
+    println!();
+
+    // Dump the LOADING entry
+    let loading_index = directory
+        .entries
+        .iter()
+        .position(|x| {
+            let description = null_terminated_bytes_to_str(&x.description).unwrap();
+            description == "LOADING"
+        })
+        .expect("Couldn't find \"LOADING\" entry!");
+    let loading_frames = &frames[loading_index];
+    for frame in loading_frames {
+        match &frame.data {
+            DemoFrameData::NetMsg((frame_ty, data)) => {
+                let sky_name = null_terminated_bytes_to_str(&data.prefix.info.move_vars.sky_name).unwrap();
+                println!("{:#?}", data.prefix);
+                println!("sky_name: {}", sky_name);
+                println!();
+            },
+            DemoFrameData::DemoStart => todo!(),
+            DemoFrameData::ConsoleCommand(console_command_data) => todo!(),
+            DemoFrameData::ClientData(client_data_data) => todo!(),
+            DemoFrameData::NextSection => todo!(),
+            DemoFrameData::Event(event_data) => todo!(),
+            DemoFrameData::WeaponAnim(weapon_anim_data) => todo!(),
+            DemoFrameData::Sound(sound_data) => todo!(),
+            DemoFrameData::DemoBuffer(demo_buffer_data) => todo!(),
         }
     }
 
