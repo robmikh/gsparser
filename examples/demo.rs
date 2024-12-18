@@ -1,7 +1,5 @@
 use gsparser::{
-    demo::{
-        parse_demo_frame_data, DemoDirectory, DemoFrameHeader, DemoFrameType, DemoHeader, Parse,
-    },
+    demo::{parse_entry_frames, DemoDirectory, DemoHeader, Parse},
     mdl::null_terminated_bytes_to_str,
 };
 
@@ -35,18 +33,13 @@ fn main() {
     }
 
     println!("Dumping frames...");
-    for entry in &directory.entries {
+    let frames = parse_entry_frames(&mut reader, &directory.entries).unwrap();
+    for (entry, frames) in directory.entries.iter().zip(&frames) {
         let description = null_terminated_bytes_to_str(&entry.description).unwrap();
         println!("  {}", description);
-        reader.set_position(entry.offset as u64);
-        loop {
-            let frame_header = DemoFrameHeader::parse(&mut reader).unwrap();
-            println!("    {:?}", frame_header.frame_ty);
-            if frame_header.frame_ty == DemoFrameType::NextSection {
-                break;
-            }
-            let _data = parse_demo_frame_data(&mut reader, frame_header.frame_ty).unwrap();
-            //println!("      {:?}", data);
+        for frame in frames {
+            println!("    {:?}", frame.header.frame_ty);
+            //println!("      {:?}", frame.data);
         }
     }
 

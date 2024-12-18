@@ -1,6 +1,6 @@
 // Heavily cannibalized from https://github.com/YaLTeR/hldemo-rs
 
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, SeekFrom};
 
 pub trait Parse: Sized {
     fn parse<T: Seek + Read>(reader: &mut T) -> Option<Self>;
@@ -311,7 +311,7 @@ impl Parse for NetMsgData {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum NetMsgFrameType {
     /// Initialization frames.
     Start,
@@ -395,7 +395,7 @@ parsable_struct!(DemoBufferData {
     data: BytesWithLength,
 });
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DemoFrameData {
     NetMsg((NetMsgFrameType, NetMsgData)),
     DemoStart,
@@ -427,4 +427,36 @@ pub fn parse_demo_frame_data<T: Seek + Read>(
         DemoFrameType::Sound => DemoFrameData::Sound(SoundData::parse(reader)?),
         DemoFrameType::DemoBuffer => DemoFrameData::DemoBuffer(DemoBufferData::parse(reader)?),
     })
+}
+
+#[derive(Clone, Debug)]
+pub struct DemoFrame {
+    pub header: DemoFrameHeader,
+    pub data: DemoFrameData,
+}
+
+pub fn parse_frames<T: Seek + Read>(reader: &mut T) -> Option<Vec<DemoFrame>> {
+    let mut frames = Vec::new();
+    loop {
+        let header = DemoFrameHeader::parse(reader)?;
+        if header.frame_ty == DemoFrameType::NextSection {
+            break;
+        }
+        let data = parse_demo_frame_data(reader, header.frame_ty)?;
+        frames.push(DemoFrame { header, data });
+    }
+    Some(frames)
+}
+
+pub fn parse_entry_frames<T: Seek + Read>(
+    reader: &mut T,
+    entries: &[DemoEntry],
+) -> Option<Vec<Vec<DemoFrame>>> {
+    let mut entry_frames = Vec::new();
+    for entry in entries {
+        reader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
+        let frames = parse_frames(reader)?;
+        entry_frames.push(frames);
+    }
+    Some(entry_frames)
 }
