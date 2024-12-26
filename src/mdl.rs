@@ -372,14 +372,26 @@ impl MdlHeader {
     }
 }
 
+#[derive(Debug)]
+pub struct MdlParseError;
+impl std::error::Error for MdlParseError {}
+impl std::fmt::Display for MdlParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MdlParseError")
+    }
+}
+
 impl MdlFile {
-    pub fn open<P: AsRef<Path>>(mdl_path: P) -> MdlFile {
+    pub fn open<P: AsRef<Path>>(mdl_path: P) -> Result<MdlFile, Box<dyn std::error::Error>> {
         let mdl_path = mdl_path.as_ref();
-        let file = File::open(mdl_path).unwrap();
-        let file_size = file.metadata().unwrap().len();
+        let file = File::open(mdl_path)?;
+        let file_size = file.metadata()?.len();
         let mut file = BufReader::new(file);
 
-        let mut header: MdlHeader = bincode::deserialize_from(&mut file).unwrap();
+        let mut header: MdlHeader = bincode::deserialize_from(&mut file)?;
+        if header.version != 10 {
+            return Err(Box::new(MdlParseError));
+        }
         let file_name = header.name_string();
 
         let textures = if header.texture_count == 0 {
@@ -657,7 +669,7 @@ impl MdlFile {
             }
         }
 
-        MdlFile {
+        Ok(MdlFile {
             name: file_name,
             textures: textures,
             body_parts: body_parts,
@@ -667,7 +679,7 @@ impl MdlFile {
             animations,
             header: header,
             raw_data: file_data,
-        }
+        })
     }
 
     // TODO: Remove
@@ -677,45 +689,52 @@ impl MdlFile {
 }
 
 fn read_textures<T: Read + Seek>(mut reader: &mut T, header: &MdlHeader) -> Vec<MdlTexture> {
-    let num_textures = header.texture_count as usize;
-    let mut texture_headers = Vec::with_capacity(num_textures);
-    reader
-        .seek(SeekFrom::Start(header.texture_offset as u64))
-        .unwrap();
-    for _ in 0..num_textures {
-        let texture_header: TextureHeader = bincode::deserialize_from(&mut reader).unwrap();
-        texture_headers.push(texture_header);
-    }
+    if header.texture_count as i32 > 0 {
+        //println!("{:#?}", header);
+        //println!("{}", header.texture_count);
+        let num_textures = header.texture_count as usize;
+        let mut texture_headers = Vec::with_capacity(num_textures);
 
-    let mut textures = Vec::with_capacity(num_textures);
-    for texture_header in &texture_headers {
-        let name_string = texture_header.name_string();
-
-        let mut image_data = vec![0u8; (texture_header.width * texture_header.height) as usize];
         reader
-            .seek(SeekFrom::Start(texture_header.offset as u64))
+            .seek(SeekFrom::Start(header.texture_offset as u64))
             .unwrap();
-        reader.read_exact(image_data.as_mut_slice()).unwrap();
+        for _ in 0..num_textures {
+            let texture_header: TextureHeader = bincode::deserialize_from(&mut reader).unwrap();
+            texture_headers.push(texture_header);
+        }
 
-        let mut palette_data = [0u8; 256 * 3];
-        reader.read_exact(&mut palette_data).unwrap();
+        let mut textures = Vec::with_capacity(num_textures);
+        for texture_header in &texture_headers {
+            let name_string = texture_header.name_string();
 
-        let converted_image = create_image(
-            &image_data,
-            &palette_data,
-            texture_header.width,
-            texture_header.height,
-        );
+            let mut image_data = vec![0u8; (texture_header.width * texture_header.height) as usize];
+            reader
+                .seek(SeekFrom::Start(texture_header.offset as u64))
+                .unwrap();
+            reader.read_exact(image_data.as_mut_slice()).unwrap();
 
-        textures.push(MdlTexture {
-            name: name_string.to_string(),
-            width: texture_header.width,
-            height: texture_header.height,
-            image_data: converted_image,
-        });
+            let mut palette_data = [0u8; 256 * 3];
+            reader.read_exact(&mut palette_data).unwrap();
+
+            let converted_image = create_image(
+                &image_data,
+                &palette_data,
+                texture_header.width,
+                texture_header.height,
+            );
+
+            textures.push(MdlTexture {
+                name: name_string.to_string(),
+                width: texture_header.width,
+                height: texture_header.height,
+                image_data: converted_image,
+            });
+        }
+
+        textures
+    } else {
+        Vec::new()
     }
-
-    textures
 }
 
 // TODO: Consolodate these image decoders into one crate
