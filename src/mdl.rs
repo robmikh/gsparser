@@ -177,11 +177,25 @@ pub struct MdlBodyPart {
     pub models: Vec<MdlModel>,
 }
 
+#[repr(u32)]
+#[derive(Copy, Clone, Debug)]
+pub enum MdlTextureFlag {
+    None = 0,
+    Flat = 1,
+    Chrome = 2,
+    FullBright = 4,
+    MipMaps = 8,
+    Alpha = 16,
+    Additive = 32,
+    Masked = 64,
+}
+
 #[derive(Clone, Debug)]
 pub struct MdlTexture {
     pub name: String,
     pub width: u32,
     pub height: u32,
+    pub flags: MdlTextureFlag,
     pub image_data: image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
 }
 
@@ -723,10 +737,15 @@ fn read_textures<T: Read + Seek>(mut reader: &mut T, header: &MdlHeader) -> Vec<
                 texture_header.height,
             );
 
+            let flags = unsafe {
+                std::mem::transmute(texture_header.flags)
+            };
+
             textures.push(MdlTexture {
                 name: name_string.to_string(),
                 width: texture_header.width,
                 height: texture_header.height,
+                flags,
                 image_data: converted_image,
             });
         }
