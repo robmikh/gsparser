@@ -205,6 +205,7 @@ pub struct MdlFile {
     pub name: String,
     pub textures: Vec<MdlTexture>,
     pub body_parts: Vec<MdlBodyPart>,
+    pub skins: Vec<Vec<usize>>,
     pub bones: Vec<BoneHeader>, // TODO: Change
     pub animation_sequences: Vec<AnimationSequence>,
     pub animation_sequence_groups: Vec<AnimationSequenceGroup>,
@@ -408,7 +409,7 @@ impl MdlFile {
         }
         let file_name = header.name_string();
 
-        let textures = if header.texture_count == 0 {
+        let (textures, skins) = if header.texture_count == 0 {
             let mut texture_mdl_path = mdl_path.to_owned();
             let file_stem = texture_mdl_path
                 .file_stem()
@@ -428,9 +429,18 @@ impl MdlFile {
             header.texture_count = texture_header.texture_count;
             header.texture_offset = texture_header.texture_offset;
             header.texture_data_index = texture_header.texture_data_index;
-            read_textures(&mut file, &texture_header)
+            let textures = read_textures(&mut file, &texture_header);
+
+            header.skin_families_count = texture_header.skin_families_count;
+            header.skin_offset = texture_header.skin_offset;
+            header.skin_ref_count = texture_header.skin_ref_count;
+            let skins = read_skins(&mut file, &texture_header);
+
+            (textures, skins)
         } else {
-            read_textures(&mut file, &header)
+            let textures = read_textures(&mut file, &header);
+            let skins = read_skins(&mut file, &header);
+            (textures, skins)
         };
 
         let body_parts = {
@@ -683,10 +693,15 @@ impl MdlFile {
             }
         }
 
+        // Skins
+        //println!("{:#?}", header);
+        assert!(header.skin_families_count > 0);
+
         Ok(MdlFile {
             name: file_name,
             textures: textures,
             body_parts: body_parts,
+            skins,
             bones,
             animation_sequences: sequences,
             animation_sequence_groups: sequence_groups,
@@ -737,9 +752,7 @@ fn read_textures<T: Read + Seek>(mut reader: &mut T, header: &MdlHeader) -> Vec<
                 texture_header.height,
             );
 
-            let flags = unsafe {
-                std::mem::transmute(texture_header.flags)
-            };
+            let flags = unsafe { std::mem::transmute(texture_header.flags) };
 
             textures.push(MdlTexture {
                 name: name_string.to_string(),
@@ -838,4 +851,27 @@ unsafe fn decode_animation_frame(
     };
     //let value = u16::MAX - value;
     value as f32 * scale
+}
+
+fn read_skins<T: Read + Seek>(reader: &mut T, header: &MdlHeader) -> Vec<Vec<usize>> {
+    if header.skin_families_count as i32 > 0 {
+        let num_skins = header.skin_families_count as usize;
+        let mut skins = Vec::with_capacity(num_skins);
+
+        reader
+            .seek(SeekFrom::Start(header.skin_offset as u64))
+            .unwrap();
+        for _ in 0..num_skins {
+            let mut bindings = Vec::with_capacity(header.skin_ref_count as usize);
+            for _ in 0..header.skin_ref_count {
+                let original_value = reader.read_i16::<LittleEndian>().unwrap();
+                let value = original_value as usize;
+                bindings.push(value);
+            }
+            skins.push(bindings);
+        }
+        skins
+    } else {
+        Vec::new()
+    }
 }
