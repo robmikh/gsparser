@@ -215,10 +215,46 @@ pub struct MdlFile {
     raw_data: Vec<u8>,
 }
 
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MdlHitBoxGroup {
+    Generic = 0,
+    Head = 1,
+    Chest = 2,
+    Stomach = 3,
+    LeftArm = 4,
+    RightArm = 5,
+    LeftLeg = 6,
+    RightLeg = 7,
+    Armor = 10,
+    Unknown(u32),
+}
+
+impl<'de> Deserialize<'de> for MdlHitBoxGroup {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de> {
+        let value = u32::deserialize(deserializer)?;
+        let group = match value {
+            0 => MdlHitBoxGroup::Generic,
+            1 => MdlHitBoxGroup::Head,
+            2 => MdlHitBoxGroup::Chest,
+            3 => MdlHitBoxGroup::Stomach,
+            4 => MdlHitBoxGroup::LeftArm,
+            5 => MdlHitBoxGroup::RightArm,
+            6 => MdlHitBoxGroup::LeftLeg,
+            7 => MdlHitBoxGroup::RightLeg,
+            10 => MdlHitBoxGroup::Armor,
+            x => MdlHitBoxGroup::Unknown(x),
+        };
+        Ok(group)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct MdlHitBox {
     pub bone_index: u32,
-    pub hit_group: u32,
+    pub hit_group: MdlHitBoxGroup,
     pub bb_min: [f32; 3],
     pub bb_max: [f32; 3],
 }
