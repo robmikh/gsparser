@@ -233,7 +233,8 @@ pub enum MdlHitBoxGroup {
 impl<'de> Deserialize<'de> for MdlHitBoxGroup {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de> {
+        D: serde::Deserializer<'de>,
+    {
         let value = u32::deserialize(deserializer)?;
         let group = match value {
             0 => MdlHitBoxGroup::Generic,
