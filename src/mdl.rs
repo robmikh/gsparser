@@ -206,12 +206,21 @@ pub struct MdlFile {
     pub textures: Vec<MdlTexture>,
     pub body_parts: Vec<MdlBodyPart>,
     pub skins: Vec<Vec<usize>>,
+    pub hit_boxes: Vec<MdlHitBox>,
     pub bones: Vec<BoneHeader>, // TODO: Change
     pub animation_sequences: Vec<AnimationSequence>,
     pub animation_sequence_groups: Vec<AnimationSequenceGroup>,
     pub animations: Vec<Animation>,
-    header: MdlHeader,
+    pub header: MdlHeader,
     raw_data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct MdlHitBox {
+    pub bone_index: u32,
+    pub hit_group: u32,
+    pub bb_min: [f32; 3],
+    pub bb_max: [f32; 3],
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -320,7 +329,7 @@ impl ModelHeader {
 
 #[allow(dead_code)]
 #[derive(Copy, Clone, Deserialize, Debug)]
-struct MdlHeader {
+pub struct MdlHeader {
     id: u32,
     version: u32,
 
@@ -697,11 +706,21 @@ impl MdlFile {
         //println!("{:#?}", header);
         assert!(header.skin_families_count > 0);
 
+        // Hit boxes
+        let mut hit_boxes = Vec::with_capacity(header.hit_box_count as usize);
+        file.seek(SeekFrom::Start(header.hit_box_offset as u64))
+            .unwrap();
+        for _ in 0..header.hit_box_count {
+            let hit_box: MdlHitBox = bincode::deserialize_from(&mut file).unwrap();
+            hit_boxes.push(hit_box);
+        }
+
         Ok(MdlFile {
             name: file_name,
             textures: textures,
             body_parts: body_parts,
             skins,
+            hit_boxes,
             bones,
             animation_sequences: sequences,
             animation_sequence_groups: sequence_groups,
