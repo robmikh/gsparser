@@ -252,7 +252,7 @@ impl<'de> Deserialize<'de> for MdlHitBoxGroup {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Copy, Clone, Debug, Deserialize)]
 pub struct MdlHitBox {
     pub bone_index: u32,
     pub hit_group: MdlHitBoxGroup,
