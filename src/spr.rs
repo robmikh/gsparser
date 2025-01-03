@@ -73,14 +73,31 @@ impl SprFile {
 
     pub fn decode_frame(&self, frame_index: usize) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
         let frame = &self.frames[frame_index];
+
+        // https://developer.valvesoftware.com/wiki/SPR
+        let transparent_index = if self.header.text_format == 3 {
+            Some(self.header.palette_color_count as usize - 1)
+        } else {
+            None
+        };
+
         let mut new_pixels =
             Vec::with_capacity(frame.header.width as usize * frame.header.height as usize * 4);
         for pixel in &frame.data {
-            let color = &self.palette[*pixel as usize];
-            new_pixels.push(color[0]);
-            new_pixels.push(color[1]);
-            new_pixels.push(color[2]);
-            new_pixels.push(255);
+            let pixel = *pixel as usize;
+            let is_transparent = transparent_index.map(|x| x == pixel).unwrap_or(false);
+            if !is_transparent {
+                let color = self.palette[pixel];
+                new_pixels.push(color[0]);
+                new_pixels.push(color[1]);
+                new_pixels.push(color[2]);
+                new_pixels.push(255);
+            } else {
+                new_pixels.push(0);
+                new_pixels.push(0);
+                new_pixels.push(0);
+                new_pixels.push(0);
+            }
         }
         image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(
             frame.header.width as u32,
