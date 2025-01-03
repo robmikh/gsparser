@@ -2,6 +2,8 @@ use std::io::{Cursor, Read};
 
 use serde::Deserialize;
 
+use crate::sprite_info::SpriteInfo;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Deserialize)]
 pub struct SprHeader {
@@ -71,6 +73,20 @@ impl SprFile {
 
     pub fn decode_frame(&self, frame_index: usize) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
         let frame = &self.frames[frame_index];
+        self.decode_image(
+            frame.header.width as u32,
+            frame.header.height as u32,
+            &frame.data,
+        )
+    }
+
+    fn decode_image(
+        &self,
+        width: u32,
+        height: u32,
+        bytes: &[u8],
+    ) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
+        assert_eq!(bytes.len(), width as usize * height as usize);
 
         // https://developer.valvesoftware.com/wiki/SPR
         let transparent_index = if self.header.text_format == 3 {
@@ -79,9 +95,8 @@ impl SprFile {
             None
         };
 
-        let mut new_pixels =
-            Vec::with_capacity(frame.header.width as usize * frame.header.height as usize * 4);
-        for pixel in &frame.data {
+        let mut new_pixels = Vec::with_capacity(width as usize * height as usize * 4);
+        for pixel in bytes {
             let pixel = *pixel as usize;
             let is_transparent = transparent_index.map(|x| x == pixel).unwrap_or(false);
             if !is_transparent {
@@ -97,11 +112,29 @@ impl SprFile {
                 new_pixels.push(0);
             }
         }
-        image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(
-            frame.header.width as u32,
-            frame.header.height as u32,
-            new_pixels,
-        )
-        .unwrap()
+        image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(width, height, new_pixels).unwrap()
+    }
+
+    pub fn decode_sprite(&self, info: &SpriteInfo) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
+        // Assume we only have one frame, and that's our atlas
+        assert_eq!(self.frames.len(), 1);
+        let frame = &self.frames[0];
+
+        let mut dest = vec![0u8; (info.width * info.height) as usize];
+        let source_stride = frame.header.width as usize;
+        let source_start = (info.y as usize * source_stride) + info.x as usize;
+        let dest_stride = info.width as usize;
+        let dest_start = 0;
+        for y in 0..info.height as usize {
+            let row_size = info.width as usize;
+            let source_start = source_start + (source_stride * y);
+            let source_end = source_start + row_size;
+            let dest_start = dest_start + (dest_stride * y);
+            let dest_end = dest_start + row_size;
+            (&mut dest[dest_start..dest_end])
+                .copy_from_slice(&frame.data[source_start..source_end]);
+        }
+
+        self.decode_image(info.width, info.height, &dest)
     }
 }

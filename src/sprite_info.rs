@@ -49,10 +49,8 @@ impl SpriteInfoFile {
                 infos.push(sprite_info);
             }
         }
-        
-        Self {
-            infos,
-        }
+
+        Self { infos }
     }
 }
 
