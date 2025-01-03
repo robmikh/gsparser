@@ -28,7 +28,6 @@ pub struct SprFrameHeader {
     pub height: i32,
 }
 
-#[repr(C)]
 #[derive(Clone, Debug)]
 pub struct SprFile {
     pub header: SprHeader,
@@ -36,7 +35,6 @@ pub struct SprFile {
     pub frames: Vec<SprFrame>,
 }
 
-#[repr(C)]
 #[derive(Clone, Debug)]
 pub struct SprFrame {
     pub header: SprFrameHeader,
