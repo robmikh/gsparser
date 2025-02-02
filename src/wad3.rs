@@ -286,6 +286,68 @@ impl WadArchive {
         }
     }
 
+    pub fn decode_mipmaped_image_as_hl_decal(&self, file_info: &WadFileInfo) -> MipmapedTextureData {
+        // the only decal in half-life is LOGO in tempdecal.wad, and it has the same layout as a mipmapped image.
+        assert!(
+            file_info.texture_type == TextureType::MipmappedImage
+                || file_info.texture_type == TextureType::Decal
+        );
+
+        let mut reader = self.get_file_data(file_info);
+        Self::decode_mipmaped_image_from_reader_as_hl_decal(&mut reader)
+    }
+
+    pub fn decode_mipmaped_image_from_reader_as_hl_decal<R: Read + Seek>(mut reader: R) -> MipmapedTextureData {
+        let texture_header: MipmappedTextureHeader =
+            bincode::deserialize_from(&mut reader).unwrap();
+
+        let (image_data, mipmap1_data, mipmap2_data, mipmap3_data) =
+            read_mipmapped_image_data(&texture_header, &mut reader);
+
+        let num_colors = reader.read_u16::<LittleEndian>().unwrap();
+        let mut palette_data = vec![0u8; (3 * num_colors) as usize];
+        reader.read_exact(&mut palette_data).unwrap();
+        let base_color_index = (num_colors as usize) - 1;
+
+        let converted_image = create_hl_decal_image(
+            &image_data,
+            &palette_data,
+            base_color_index,
+            texture_header.width,
+            texture_header.height,
+        );
+        let converted_mipmap1 = create_hl_decal_image(
+            &mipmap1_data,
+            &palette_data,
+            base_color_index,
+            texture_header.width / 2,
+            texture_header.height / 2,
+        );
+        let converted_mipmap2 = create_hl_decal_image(
+            &mipmap2_data,
+            &palette_data,
+            base_color_index,
+            texture_header.width / 4,
+            texture_header.height / 4,
+        );
+        let converted_mipmap3 = create_hl_decal_image(
+            &mipmap3_data,
+            &palette_data,
+            base_color_index,
+            texture_header.width / 8,
+            texture_header.height / 8,
+        );
+
+        MipmapedTextureData {
+            image_width: texture_header.width,
+            image_height: texture_header.height,
+            image: converted_image,
+            mipmap1: converted_mipmap1,
+            mipmap2: converted_mipmap2,
+            mipmap3: converted_mipmap3,
+        }
+    }
+
     pub fn decode_image(&self, file_info: &WadFileInfo) -> TextureData {
         assert_eq!(file_info.texture_type, TextureType::Image);
 
@@ -444,6 +506,37 @@ fn create_image_with_alpha_key(
             image_rgba_data.push(r_color);
             image_rgba_data.push(255);
         }
+    }
+
+    image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_vec(
+        texture_width,
+        texture_height,
+        image_rgba_data,
+    )
+    .unwrap()
+}
+
+fn create_hl_decal_image(
+    image_data: &[u8],
+    palette_data: &[u8],
+    base_color_index: usize,
+    texture_width: u32,
+    texture_height: u32,
+) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
+    let base_color_palette_index = base_color_index * 3;
+    let base_r_color = palette_data[base_color_palette_index + 0];
+    let base_g_color = palette_data[base_color_palette_index + 1];
+    let base_b_color = palette_data[base_color_palette_index + 2];
+
+    let mut image_rgba_data = Vec::<u8>::new();
+    for palette_index in image_data {
+        let index = (*palette_index as usize) * 3;
+        let alpha = 255 - palette_data[index + 0];
+        
+        image_rgba_data.push(base_r_color);
+        image_rgba_data.push(base_g_color);
+        image_rgba_data.push(base_b_color);
+        image_rgba_data.push(alpha);
     }
 
     image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_vec(
