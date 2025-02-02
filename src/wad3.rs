@@ -286,7 +286,10 @@ impl WadArchive {
         }
     }
 
-    pub fn decode_mipmaped_image_as_hl_decal(&self, file_info: &WadFileInfo) -> MipmapedTextureData {
+    pub fn decode_mipmaped_image_as_hl_decal(
+        &self,
+        file_info: &WadFileInfo,
+    ) -> MipmapedTextureData {
         // the only decal in half-life is LOGO in tempdecal.wad, and it has the same layout as a mipmapped image.
         assert!(
             file_info.texture_type == TextureType::MipmappedImage
@@ -297,7 +300,9 @@ impl WadArchive {
         Self::decode_mipmaped_image_from_reader_as_hl_decal(&mut reader)
     }
 
-    pub fn decode_mipmaped_image_from_reader_as_hl_decal<R: Read + Seek>(mut reader: R) -> MipmapedTextureData {
+    pub fn decode_mipmaped_image_from_reader_as_hl_decal<R: Read + Seek>(
+        mut reader: R,
+    ) -> MipmapedTextureData {
         let texture_header: MipmappedTextureHeader =
             bincode::deserialize_from(&mut reader).unwrap();
 
@@ -532,7 +537,7 @@ fn create_hl_decal_image(
     for palette_index in image_data {
         let index = (*palette_index as usize) * 3;
         let alpha = 255 - palette_data[index + 0];
-        
+
         image_rgba_data.push(base_r_color);
         image_rgba_data.push(base_g_color);
         image_rgba_data.push(base_b_color);
