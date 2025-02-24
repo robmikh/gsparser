@@ -211,6 +211,7 @@ pub struct MdlFile {
     pub animation_sequences: Vec<AnimationSequence>,
     pub animation_sequence_groups: Vec<AnimationSequenceGroup>,
     pub animations: Vec<Animation>,
+    pub animation_sequence_events: Vec<Vec<AnimationEvent>>,
     pub header: MdlHeader,
     raw_data: Vec<u8>,
 }
@@ -268,6 +269,55 @@ pub struct BoneHeader {
     pub bone_controller: [i32; 6],
     pub value: [f32; 6],
     pub scale: [f32; 6],
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct AnimationEvent {
+    pub frame: i32,
+    pub event: AnimationEventType,
+    pub unused: i32,
+    pub options: [[u8; 8]; 8],
+}
+
+#[repr(i32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum AnimationEventType {
+    Dead = 1000,
+    NoInterrupt = 1001,
+    CanInterrupt = 1002,
+    FireEvent = 1003,
+    Sound = 1004,
+    Sentence = 1005,
+    InAir = 1006,
+    EndAnimation = 1007,
+    SoundVoice = 1008,
+    SentenceRnd1 = 1009,
+    NotDead = 1010,
+    Unknown(i32),
+}
+
+impl<'de> Deserialize<'de> for AnimationEventType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = i32::deserialize(deserializer)?;
+        let ty = match value {
+            1000 => AnimationEventType::Dead,
+            1001 => AnimationEventType::NoInterrupt,
+            1002 => AnimationEventType::CanInterrupt,
+            1003 => AnimationEventType::FireEvent,
+            1004 => AnimationEventType::Sound,
+            1005 => AnimationEventType::Sentence,
+            1006 => AnimationEventType::InAir,
+            1007 => AnimationEventType::EndAnimation,
+            1008 => AnimationEventType::SoundVoice,
+            1009 => AnimationEventType::SentenceRnd1,
+            1010 => AnimationEventType::NotDead,
+            x => AnimationEventType::Unknown(x),
+        };
+        Ok(ty)
+    }
 }
 
 #[allow(dead_code)]
@@ -752,6 +802,20 @@ impl MdlFile {
             hit_boxes.push(hit_box);
         }
 
+        // Animation evetns (per sequence)
+        let animation_sequence_events: Vec<_> = sequences
+            .iter()
+            .map(|x| {
+                let mut events = Vec::with_capacity(x.num_events as usize);
+                file.seek(SeekFrom::Start(x.event_offset as u64)).unwrap();
+                for _ in 0..x.num_events {
+                    let event: AnimationEvent = bincode::deserialize_from(&mut file).unwrap();
+                    events.push(event);
+                }
+                events
+            })
+            .collect();
+
         Ok(MdlFile {
             name: file_name,
             textures: textures,
@@ -761,6 +825,7 @@ impl MdlFile {
             bones,
             animation_sequences: sequences,
             animation_sequence_groups: sequence_groups,
+            animation_sequence_events,
             animations,
             header: header,
             raw_data: file_data,
