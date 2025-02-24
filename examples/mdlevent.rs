@@ -1,9 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
+use std::time::Duration;
 
 use gsparser::mdl::{null_terminated_bytes_to_str, MdlFile};
-use id_tree::InsertBehavior::AsRoot;
-use id_tree::InsertBehavior::UnderNode;
-use id_tree::TreeBuilder;
 
 pub fn resolve_string_bytes<'a>(bytes: &'a [u8]) -> std::borrow::Cow<'a, str> {
     match null_terminated_bytes_to_str(bytes) {
@@ -39,10 +37,21 @@ fn main() {
         .iter()
         .zip(file.animation_sequence_events.iter())
     {
+        if events.is_empty() {
+            continue;
+        }
         let animation_name = resolve_string_bytes(&sequence.name);
-        println!("{}", animation_name);
+        println!("  {} ({} fps)", animation_name, sequence.fps);
+        let seconds_per_frame = 1.0 / sequence.fps;
+        let frame_duration = Duration::from_secs_f32(seconds_per_frame);
         for event in events {
-            println!("  {} - {:?}", event.frame, event.event);
+            let time = frame_duration * event.frame as u32;
+            println!(
+                "    {} ({} ms) - {:?}",
+                event.frame,
+                time.as_millis(),
+                event.event
+            );
         }
     }
 }
