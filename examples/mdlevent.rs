@@ -46,11 +46,13 @@ fn main() {
         let frame_duration = Duration::from_secs_f32(seconds_per_frame);
         for event in events {
             let time = frame_duration * event.frame as u32;
+            let options = event.options_string().unwrap_or("ERROR");
             println!(
-                "    {} ({} ms) - {:?}",
+                "    {} ({} ms) - {:?}   - {:?}",
                 event.frame,
                 time.as_millis(),
-                event.event
+                event.event,
+                options,
             );
         }
     }

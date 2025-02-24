@@ -279,6 +279,17 @@ pub struct AnimationEvent {
     pub options: [[u8; 8]; 8],
 }
 
+impl AnimationEvent {
+    pub fn options(&self) -> &[u8; 64] {
+        unsafe { std::mem::transmute(&self.options) }
+    }
+
+    pub fn options_string<'a>(&'a self) -> Result<&'a str, NullTerminatedStrError> {
+        let options = self.options();
+        null_terminated_bytes_to_str(options)
+    }
+}
+
 #[repr(i32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AnimationEventType {
