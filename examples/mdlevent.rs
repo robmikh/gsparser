@@ -37,11 +37,17 @@ fn main() {
         .iter()
         .zip(file.animation_sequence_events.iter())
     {
-        if events.is_empty() {
+        let is_movement_zero = sequence.linear_movement[0] == 0.0
+            && sequence.linear_movement[1] == 0.0
+            && sequence.linear_movement[2] == 0.0;
+        if events.is_empty() || is_movement_zero {
             continue;
         }
         let animation_name = resolve_string_bytes(&sequence.name);
-        println!("  {} ({} fps)", animation_name, sequence.fps);
+        println!(
+            "  {} ({} fps) {:?}",
+            animation_name, sequence.fps, sequence.linear_movement
+        );
         let seconds_per_frame = 1.0 / sequence.fps;
         let frame_duration = Duration::from_secs_f32(seconds_per_frame);
         for event in events {
