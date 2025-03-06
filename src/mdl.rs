@@ -968,7 +968,7 @@ unsafe fn decode_animation_frame(
     mut anim_value_ptr: *const AnimationValue,
     frame: i32,
     scale: f32,
-) -> f32 {
+) -> f32 { unsafe {
     let mut k = frame;
 
     while (*anim_value_ptr).encoded_value.total as i32 <= k {
@@ -983,7 +983,7 @@ unsafe fn decode_animation_frame(
     };
     //let value = u16::MAX - value;
     value as f32 * scale
-}
+}}
 
 fn read_skins<T: Read + Seek>(reader: &mut T, header: &MdlHeader) -> Vec<Vec<usize>> {
     if header.skin_families_count as i32 > 0 {
