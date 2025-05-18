@@ -1,7 +1,7 @@
 use std::fmt::Write;
 use std::{collections::HashMap, path::PathBuf};
 
-use gsparser::mdl::{null_terminated_bytes_to_str, MdlFile};
+use gsparser::mdl::{MdlFile, null_terminated_bytes_to_str};
 use gsparser::spr::SprFile;
 use gsparser::sprite_info::SpriteInfoFile;
 use id_tree::InsertBehavior::AsRoot;

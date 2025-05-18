@@ -2,10 +2,7 @@ extern crate glob;
 extern crate gsparser;
 
 use glob::glob;
-use gsparser::{
-    bsp::BspReader,
-    mdl::null_terminated_bytes_to_str,
-};
+use gsparser::{bsp::BspReader, mdl::null_terminated_bytes_to_str};
 use std::{borrow::Cow, env, path::PathBuf};
 
 fn main() {

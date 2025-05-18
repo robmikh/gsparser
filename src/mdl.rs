@@ -5,7 +5,7 @@ extern crate serde;
 
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str;
 
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -428,7 +428,7 @@ impl ModelHeader {
 #[allow(dead_code)]
 #[derive(Copy, Clone, Deserialize, Debug)]
 pub struct MdlHeader {
-    id: u32,
+    id: [u8; 4],
     version: u32,
 
     name: [[u8; 8]; 8],
@@ -516,14 +516,10 @@ impl MdlFile {
         }
         let file_name = header.name_string();
 
+        let file_stem = mdl_path.file_stem().unwrap().to_str().unwrap().to_owned();
+
         let (textures, skins) = if header.texture_count == 0 {
             let mut texture_mdl_path = mdl_path.to_owned();
-            let file_stem = texture_mdl_path
-                .file_stem()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_owned();
             texture_mdl_path.set_file_name(format!("{}t.mdl", file_stem));
             let texture_mdl_path = texture_mdl_path.into_os_string();
             let texture_mdl_path = texture_mdl_path.into_string().unwrap();
@@ -734,70 +730,92 @@ impl MdlFile {
             file_data
         };
 
+        // Go through each sequence group and load their respective file datas
+        let seq_group_datas = {
+            let mut seq_group_datas = Vec::new();
+            let mut animation_file_path = mdl_path.to_owned();
+            for sequence_group in sequence_groups.iter().skip(1) {
+                let sequence_group_file_name =
+                    null_terminated_bytes_to_str(sequence_group.name()).unwrap();
+                let sequence_group_file_path = PathBuf::from(sequence_group_file_name);
+                let sequence_group_file_stem = sequence_group_file_path
+                    .file_stem()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned();
+
+                animation_file_path.set_file_name(format!("{}.mdl", sequence_group_file_stem));
+                let bytes = std::fs::read(&animation_file_path)?;
+                seq_group_datas.push(bytes);
+            }
+            seq_group_datas
+        };
+
         // Animations
         let mut animations = Vec::new();
         for animated_sequence in &sequences {
             let name = null_terminated_bytes_to_str(&animated_sequence.name).unwrap();
 
-            // TODO: Load other files
-            if animated_sequence.sequence_group == 0 {
-                //println!("  {}", name);
+            let sequence_group = &sequence_groups[animated_sequence.sequence_group as usize];
+            assert_eq!(sequence_group.unused_2, 0);
+            let animation_offset = /*sequence_group.unused_2 as usize +*/ animated_sequence.animation_offset as usize;
+            let animation_data = if animated_sequence.sequence_group == 0 {
+                &file_data[animation_offset..]
+            } else {
+                &seq_group_datas[(animated_sequence.sequence_group - 1) as usize]
+                    [animation_offset..]
+            };
+            let animation_value_offsets_ptr =
+                animation_data.as_ptr() as *const AnimationValueOffsets;
 
-                let sequence_group = &sequence_groups[animated_sequence.sequence_group as usize];
-                assert_eq!(sequence_group.unused_2, 0);
-                let animation_offset = /*sequence_group.unused_2 as usize +*/ animated_sequence.animation_offset as usize;
-                let animation_data = &file_data[animation_offset..];
-                let animation_value_offsets_ptr =
-                    animation_data.as_ptr() as *const AnimationValueOffsets;
+            let mut bone_animations = Vec::new();
+            for i in 0..bones.len() {
+                //println!("    Bone {}:", i);
 
-                let mut bone_animations = Vec::new();
-                for i in 0..bones.len() {
-                    //println!("    Bone {}:", i);
+                let animation_value_offsets =
+                    unsafe { animation_value_offsets_ptr.add(i).as_ref().unwrap() };
+                let animation_data =
+                    { animation_value_offsets as *const AnimationValueOffsets as *const u8 };
 
-                    let animation_value_offsets =
-                        unsafe { animation_value_offsets_ptr.add(i).as_ref().unwrap() };
-                    let animation_data =
-                        { animation_value_offsets as *const AnimationValueOffsets as *const u8 };
+                let mut channels = Vec::new();
+                for (j, offset) in animation_value_offsets.offsets.iter().enumerate() {
+                    if *offset != 0 {
+                        let anim_value_ptr = unsafe {
+                            animation_data.add(*offset as usize) as *const AnimationValue
+                        };
+                        let scale = bones[i].scale[j];
 
-                    let mut channels = Vec::new();
-                    for (j, offset) in animation_value_offsets.offsets.iter().enumerate() {
-                        if *offset != 0 {
-                            let anim_value_ptr = unsafe {
-                                animation_data.add(*offset as usize) as *const AnimationValue
-                            };
-                            let scale = bones[i].scale[j];
-
-                            //println!("      ({})", scale);
-                            //print!("      ");
-                            let mut keyframes = Vec::new();
-                            let target = ComponentTransformTarget::from_index(j);
-                            for frame in 0..animated_sequence.num_frames as i32 {
-                                let mut value =
-                                    unsafe { decode_animation_frame(anim_value_ptr, frame, scale) };
-                                value += bones[i].value[j];
-                                //print!("{}:{}, ", frame, value);
-                                keyframes.push(value);
-                            }
-                            //println!();
-
-                            channels.push(BoneChannelAnimation { target, keyframes })
+                        //println!("      ({})", scale);
+                        //print!("      ");
+                        let mut keyframes = Vec::new();
+                        let target = ComponentTransformTarget::from_index(j);
+                        for frame in 0..animated_sequence.num_frames as i32 {
+                            let mut value =
+                                unsafe { decode_animation_frame(anim_value_ptr, frame, scale) };
+                            value += bones[i].value[j];
+                            //print!("{}:{}, ", frame, value);
+                            keyframes.push(value);
                         }
-                    }
+                        //println!();
 
-                    if !channels.is_empty() {
-                        bone_animations.push(BoneAnimation {
-                            target: i,
-                            channels,
-                        })
+                        channels.push(BoneChannelAnimation { target, keyframes })
                     }
                 }
 
-                animations.push(Animation {
-                    name: name.to_owned(),
-                    fps: animated_sequence.fps,
-                    bone_animations,
-                })
+                if !channels.is_empty() {
+                    bone_animations.push(BoneAnimation {
+                        target: i,
+                        channels,
+                    })
+                }
             }
+
+            animations.push(Animation {
+                name: name.to_owned(),
+                fps: animated_sequence.fps,
+                bone_animations,
+            });
         }
 
         // Skins
@@ -968,22 +986,24 @@ unsafe fn decode_animation_frame(
     mut anim_value_ptr: *const AnimationValue,
     frame: i32,
     scale: f32,
-) -> f32 { unsafe {
-    let mut k = frame;
+) -> f32 {
+    unsafe {
+        let mut k = frame;
 
-    while (*anim_value_ptr).encoded_value.total as i32 <= k {
-        k -= (*anim_value_ptr).encoded_value.total as i32;
-        anim_value_ptr = anim_value_ptr.add((*anim_value_ptr).encoded_value.valid as usize + 1);
+        while (*anim_value_ptr).encoded_value.total as i32 <= k {
+            k -= (*anim_value_ptr).encoded_value.total as i32;
+            anim_value_ptr = anim_value_ptr.add((*anim_value_ptr).encoded_value.valid as usize + 1);
+        }
+
+        let value = if (*anim_value_ptr).encoded_value.valid as i32 > k {
+            (*anim_value_ptr.add(k as usize + 1)).value
+        } else {
+            (*anim_value_ptr.add((*anim_value_ptr).encoded_value.valid as usize)).value
+        };
+        //let value = u16::MAX - value;
+        value as f32 * scale
     }
-
-    let value = if (*anim_value_ptr).encoded_value.valid as i32 > k {
-        (*anim_value_ptr.add(k as usize + 1)).value
-    } else {
-        (*anim_value_ptr.add((*anim_value_ptr).encoded_value.valid as usize)).value
-    };
-    //let value = u16::MAX - value;
-    value as f32 * scale
-}}
+}
 
 fn read_skins<T: Read + Seek>(reader: &mut T, header: &MdlHeader) -> Vec<Vec<usize>> {
     if header.skin_families_count as i32 > 0 {

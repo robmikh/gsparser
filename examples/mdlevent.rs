@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use gsparser::mdl::{null_terminated_bytes_to_str, MdlFile};
+use gsparser::mdl::{MdlFile, null_terminated_bytes_to_str};
 
 pub fn resolve_string_bytes<'a>(bytes: &'a [u8]) -> std::borrow::Cow<'a, str> {
     match null_terminated_bytes_to_str(bytes) {

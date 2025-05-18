@@ -1,5 +1,5 @@
 use gsparser::{
-    demo::{parse_entry_frames, DemoDirectory, DemoFrameData, DemoHeader, Parse},
+    demo::{DemoDirectory, DemoFrameData, DemoHeader, Parse, parse_entry_frames},
     mdl::null_terminated_bytes_to_str,
 };
 

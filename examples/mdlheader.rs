@@ -48,7 +48,7 @@ fn main() {
 
         output_path.set_file_name(format!("{}.txt", stem));
         std::fs::write(&output_path, text).unwrap();
-    }    
+    }
 
     println!("Done!");
 }
