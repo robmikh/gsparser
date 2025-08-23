@@ -231,6 +231,16 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         writeln!(&mut output, "Saw non-default size clue!")?;
     }
 
+    // The next chunk of data contains the map name, the substrings "HL1" and
+    // "sav", and something that ends in "VALVq".
+    let valvq_block_len = 272;
+    let valvq_block_start = door_info_offset;
+    let valvq_block_bytes = &bytes[valvq_block_start..valvq_block_start+valvq_block_len];
+    assert_eq!(valvq_block_len, valvq_block_bytes.len());
+    assert_eq!(valvq_block_bytes[0], 0);
+    assert_eq!(valvq_block_bytes[1], 0);
+    let suffix = &valvq_block_bytes[valvq_block_len-5..];
+    assert_eq!(suffix, b"VALVq");
 
     Ok(SavData {
         map_name: map_name.to_owned(),
