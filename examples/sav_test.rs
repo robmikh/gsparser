@@ -10,23 +10,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn process_path(sav_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read(sav_path)?;
 
-    // Sanity test
-    let sanity_offset = 0x2D30;
-    let mut sanity_bytes = [0u8; 4];
-    sanity_bytes.copy_from_slice(&bytes[sanity_offset..sanity_offset+4]);
-    println!("Sanity bytes: {:X?}", &sanity_bytes);
-    assert_eq!(sanity_bytes, [0xB, 0x0, 0xBD, 0x1]);
-
     // Look for: XXBD01
     // TODO: Is there a fixed or specified place to start?
     let mut current = 0;
     let window_len = 4;
     let mut offsets_and_ends = Vec::new();
+    let mut first_offset_and_class_name = None;
     while current + window_len < bytes.len() {
         let current_bytes = &bytes[current..current + window_len];
 
         if current_bytes[2] == 0xBD && current_bytes[3] == 0x01 {
-            let number = u16::from_le_bytes(current_bytes[0..2].try_into()?);
+            let number = u16::from_le_bytes(current_bytes[0..2].try_into()?) as usize;
 
             let class_name_start = current + window_len;
             let mut class_name_end = class_name_start;
@@ -38,8 +32,17 @@ fn process_path(sav_path: &str) -> Result<(), Box<dyn std::error::Error>> {
             }
             let class_name_bytes = &bytes[class_name_start..class_name_end];
             let class_name = std::str::from_utf8(class_name_bytes)?;
-            assert_eq!(class_name.len() + 1, number as usize, "\"{}\" at offset {} ({:X}) should be {} bytes long, is {}.", class_name, current, current, number, class_name.len() + 1);
+
+            if class_name.len() + 1 != number {
+                println!("WARNING: Assuming false positive at {:X}. ", current);
+                current += 1;
+                continue;
+            }
+
             offsets_and_ends.push((current, class_name_end));
+            if first_offset_and_class_name.is_none() {
+                first_offset_and_class_name = Some((current, class_name));
+            }
 
             println!("  {:6X} {:04} {}", current, number, class_name);
             current = class_name_end + 1;
@@ -47,7 +50,11 @@ fn process_path(sav_path: &str) -> Result<(), Box<dyn std::error::Error>> {
             current += 1;
         }
     }
+
+    // The first entry should be the worldspawn entity
+    assert_eq!(first_offset_and_class_name.map(|(_, class_name)| class_name), Some("worldspawn"));
     
+    let mut num_world_spawn = 0;
     for pairs in offsets_and_ends.windows(2) {
         let offset = pairs[0].0;
         let end = pairs[0].1;
@@ -62,9 +69,17 @@ fn process_path(sav_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let class_name_bytes = &bytes[class_name_start..end];
         let class_name = std::str::from_utf8(class_name_bytes)?;
 
+        if class_name == "worldspawn" {
+            num_world_spawn += 1;
+        }
+
         println!("  {:6X} {:8} {:8} {:8}  {}", offset, offset_distance, end_distance, end_to_next_offset, class_name);
     }
 
     println!("There are {} pairs.", offsets_and_ends.len());
+    println!("There are {} pairs that have a worldspawn class name", num_world_spawn);
+    // Doesn't work with all my saves...
+    //assert!(offsets_and_ends.len() % num_world_spawn == 0, "Number of pairs {} are not divisible by {}", offsets_and_ends.len(), num_world_spawn);
+
     Ok(())
 }
