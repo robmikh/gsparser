@@ -1,4 +1,4 @@
-use std::{borrow::Cow, path::{Path, PathBuf}};
+use std::{borrow::Cow, fmt::Write, path::{Path, PathBuf}};
 
 use gsparser::{bsp::{BspEntity, BspReader}, mdl::null_terminated_bytes_to_str};
 
@@ -6,9 +6,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let sav_path = args.get(0).unwrap();
     let game_root = args.get(1).unwrap();
+    let output_path = args.get(2).unwrap();
 
     let sav_path = PathBuf::from(sav_path);
     let game_root = PathBuf::from(game_root);
+    let output_path = PathBuf::from(output_path);
 
     let sav_paths = 
     if sav_path.is_dir() {
@@ -35,7 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     for sav_path in sav_paths {
         println!("Processing: {}", sav_path.display());
-        let data = process_path(sav_path)?;
+        let data = process_path(&sav_path)?;
+        println!("  num worldspawn: {}", data.num_world_spawns);
 
         let map_path = {
             let mut path = game_root.clone();
@@ -51,8 +54,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let entities = BspEntity::parse_entities(&entity_string);
         let num_entities = entities.len();
 
-        println!("  num_pairs: {}    num_entities: {}    remainder: {}    divided: {}", data.num_pairs, num_entities, data.num_pairs % num_entities, data.num_pairs as f64 / num_entities as f64);
-        //assert!(data.num_pairs % num_entities == 0, "num_pairs: {}    num_entities: {}    remainder: {}    divided: {}", data.num_pairs, num_entities, data.num_pairs % num_entities, data.num_pairs as f64 / num_entities as f64);
+        println!("  num_pairs: {}    num_entities: {}    remainder: {}    divided: {}", data.num_entries, num_entities, data.num_entries % num_entities, data.num_entries as f64 / num_entities as f64);
+        //assert!(data.num_pairs % num_entities == 0, "num_pairs: {}    num_entities: {}    remainder: {}    divided: {}", data.num_entries, num_entities, data.num_entries % num_entities, data.num_entries as f64 / num_entities as f64);
+    
+        assert!(data.num_world_spawns > 1);
+        for window in data.world_spawn_indices.windows(2) {
+            let first_index = window[0];
+            let second_index = window[1];
+            let between_world_spawns = second_index - first_index;
+            println!("  Entries between world spawns {} and {}: {}", first_index, second_index, between_world_spawns);
+        }
+
+        let sav_output_path = {
+            let mut path = output_path.clone();
+            path.push(sav_path.file_name().unwrap().to_str().unwrap());
+            path.set_extension("txt");
+            path
+        };
+        std::fs::write(sav_output_path, &data.output)?;
+
+        println!();
     }
 
     Ok(())
@@ -71,12 +92,17 @@ fn find_next_null(bytes: &[u8], start: usize) -> Option<usize> {
 
 struct SavData {
     map_name: String,
-    num_pairs: usize,
-    num_worldspawn: usize,
+    num_entries: usize,
+    num_world_spawns: usize,
+    entries: Vec<(usize, String)>,
+    world_spawn_indices: Vec<usize>,
+    output: String,
 }
 
 fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::error::Error>> {
     let bytes = std::fs::read(sav_path)?;
+
+    let mut output = String::new();
 
     // Look for: XXBD01
     // TODO: Is there a fixed or specified place to start?
@@ -84,6 +110,8 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     let window_len = 4;
     let mut offsets_and_ends = Vec::new();
     let mut first_offset_and_class_name = None;
+    let mut entries = Vec::new();
+    let mut world_spawn_indices = Vec::new();
     while current + window_len < bytes.len() {
         let current_bytes = &bytes[current..current + window_len];
 
@@ -95,24 +123,28 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
             let class_name_bytes = &bytes[class_name_start..class_name_end];
             let class_name_result = std::str::from_utf8(class_name_bytes);
             if class_name_result.is_err() {
-                //println!("WARNING: Assuming false positive at {:X} due to invalid utf8 class name.", current);
+                writeln!(&mut output, "WARNING: Assuming false positive at {:X} due to invalid utf8 class name.", current)?;
                 current += 1;
                 continue;
             }
             let class_name = class_name_result?;
 
             if class_name.len() + 1 != number {
-                //println!("WARNING: Assuming false positive at {:X} due to wrong class name length. ", current);
+                writeln!(&mut output, "WARNING: Assuming false positive at {:X} due to wrong class name length. ", current)?;
                 current += 1;
                 continue;
             }
 
             offsets_and_ends.push((current, class_name_end));
+            entries.push((current, class_name.to_owned()));
             if first_offset_and_class_name.is_none() {
                 first_offset_and_class_name = Some((current, class_name));
             }
+            if class_name == "worldspawn" {
+                world_spawn_indices.push(entries.len() - 1);
+            }
 
-            //println!("  {:6X} {:04} {}", current, number, class_name);
+            writeln!(&mut output, "  {:6X} {:04} {}", current, number, class_name)?;
             current = class_name_end + 1;
         } else {
             current += 1;
@@ -122,7 +154,6 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     // The first entry should be the worldspawn entity
     assert_eq!(first_offset_and_class_name.map(|(_, class_name)| class_name), Some("worldspawn"));
     
-    let mut num_world_spawn = 0;
     for pairs in offsets_and_ends.windows(2) {
         let offset = pairs[0].0;
         let end = pairs[0].1;
@@ -137,15 +168,11 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         let class_name_bytes = &bytes[class_name_start..end];
         let class_name = std::str::from_utf8(class_name_bytes)?;
 
-        if class_name == "worldspawn" {
-            num_world_spawn += 1;
-        }
-
-        //println!("  {:6X} {:8} {:8} {:8}  {}", offset, offset_distance, end_distance, end_to_next_offset, class_name);
+        writeln!(&mut output, "  {:6X} {:8} {:8} {:8}  {}", offset, offset_distance, end_distance, end_to_next_offset, class_name)?;
     }
 
-    //println!("There are {} pairs.", offsets_and_ends.len());
-    //println!("There are {} pairs that have a worldspawn class name", num_world_spawn);
+    writeln!(&mut output, "There are {} pairs.", offsets_and_ends.len())?;
+    writeln!(&mut output, "There are {} pairs that have a worldspawn class name", world_spawn_indices.len())?;
     // Doesn't work with all my saves...
     //assert!(offsets_and_ends.len() % num_world_spawn == 0, "Number of pairs {} are not divisible by {}", offsets_and_ends.len(), num_world_spawn);
 
@@ -154,12 +181,18 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     let map_name_end = find_next_null(&bytes, map_name_start).unwrap();
     let map_name_bytes = &bytes[map_name_start..map_name_end];
     let map_name = std::str::from_utf8(map_name_bytes)?;
-    //println!("Map name: {}", map_name);
+    writeln!(&mut output, "Map name: {}", map_name)?;
+
+    let num_entries = entries.len();
+    let num_world_spawns = world_spawn_indices.len();
 
     Ok(SavData {
         map_name: map_name.to_owned(),
-        num_pairs: offsets_and_ends.len(),
-        num_worldspawn: num_world_spawn,
+        num_entries,
+        num_world_spawns,
+        entries,
+        world_spawn_indices,
+        output,
     })
 }
 
