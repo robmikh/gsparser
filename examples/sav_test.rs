@@ -186,6 +186,41 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     let num_entries = entries.len();
     let num_world_spawns = world_spawn_indices.len();
 
+    // Read door infos (?)
+    let door_info_count_offset = 0x10EE;
+    let num_door_infos = bytes[door_info_count_offset] as usize;
+    let door_infos_offset = door_info_count_offset + 1;
+    writeln!(&mut output, "Door infos:")?;
+    for i in 0..num_door_infos {
+        let door_info_offset = door_infos_offset + (i * 120);
+
+        let data = &bytes[door_info_offset..door_info_offset+120];
+
+        // Check first 15 bytes
+        let prefix = &data[..15];
+        let expected = [0x00, 0x00, 0x00, 0x04, 0x00, 0xF1, 0x07, 0x03, 0x00, 0x00, 0x00, 0x40, 0x00, 0x1A, 0x0F];
+        if prefix != &expected {
+            writeln!(&mut output, "  WARNING: Door info prefix didn't match!")?;
+            writeln!(&mut output, "    found:")?;
+            writeln!(&mut output, "      {:02X?}", prefix)?;
+            writeln!(&mut output, "    expected:")?;
+            writeln!(&mut output, "      {:02X?}", expected)?;
+        }
+
+        let target_name_start = 15;
+        let target_name_end = find_next_null(data, target_name_start).unwrap();
+        let target_name_bytes = &data[target_name_start..target_name_end];
+        let target_name = std::str::from_utf8(target_name_bytes)?;
+
+        let entity_map_name_start = 83;
+        let entity_map_name_end = find_next_null(data, entity_map_name_start).unwrap();
+        let entity_map_name_bytes = &data[entity_map_name_start..entity_map_name_end];
+        let entity_map_name = std::str::from_utf8(entity_map_name_bytes)?;
+
+        writeln!(&mut output, "  {}  ({})", target_name, entity_map_name)?;
+    }
+
+
     Ok(SavData {
         map_name: map_name.to_owned(),
         num_entries,
