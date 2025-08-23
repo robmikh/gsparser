@@ -217,11 +217,13 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         let target_name_end = find_next_null(data, target_name_start).unwrap();
         let target_name_bytes = &data[target_name_start..target_name_end];
         let target_name = std::str::from_utf8(target_name_bytes)?;
+        assert!(!target_name.is_empty());
 
         let entity_map_name_start = 83;
         let entity_map_name_end = find_next_null(data, entity_map_name_start).unwrap();
         let entity_map_name_bytes = &data[entity_map_name_start..entity_map_name_end];
         let entity_map_name = std::str::from_utf8(entity_map_name_bytes)?;
+        assert!(!entity_map_name.is_empty());
 
         writeln!(&mut output, "  {}  ({})", target_name, entity_map_name)?;
     }
