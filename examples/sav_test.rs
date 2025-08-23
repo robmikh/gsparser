@@ -200,13 +200,6 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         assert_eq!(&prefix[..7], &expected[..7]);
         // The rest of the bytes after the size clude also seem to be constant
         assert_eq!(&prefix[8..], &expected[8..]);
-        //if prefix != &expected {
-        //    writeln!(&mut output, "  WARNING: Door info prefix didn't match!")?;
-        //    writeln!(&mut output, "    found:")?;
-        //    writeln!(&mut output, "      {:02X?}", prefix)?;
-        //    writeln!(&mut output, "    expected:")?;
-        //    writeln!(&mut output, "      {:02X?}", expected)?;
-        //}
         let size_clue = prefix[7];
         if size_clue != 0x3 {
             saw_non_default_size_clue = true;
