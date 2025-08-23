@@ -32,10 +32,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let class_name = std::str::from_utf8(class_name_bytes)?;
             assert_eq!(class_name.len() + 1, number as usize, "\"{}\" at offset {} ({:X}) should be {} bytes long, is {}.", class_name, current, current, number, class_name.len() + 1);
 
-            println!("  {:04} {}", number, class_name);
+            println!("  {:6X} {:04} {}", current, number, class_name);
+            current = class_name_end + 1;
+        } else {
+            current += 1;
         }
-
-        current += 1;
     }
 
 
