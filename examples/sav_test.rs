@@ -15,6 +15,7 @@ fn process_path(sav_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut sanity_bytes = [0u8; 4];
     sanity_bytes.copy_from_slice(&bytes[sanity_offset..sanity_offset+4]);
     println!("Sanity bytes: {:X?}", &sanity_bytes);
+    assert_eq!(sanity_bytes, [0xB, 0x0, 0xBD, 0x1]);
 
     // Look for: XXBD01
     // TODO: Is there a fixed or specified place to start?
