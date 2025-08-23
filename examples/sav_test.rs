@@ -1,10 +1,15 @@
-use std::path::{Path, PathBuf};
+use std::{borrow::Cow, path::{Path, PathBuf}};
+
+use gsparser::{bsp::{BspEntity, BspReader}, mdl::null_terminated_bytes_to_str};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let sav_path = args.get(0).unwrap();
+    let game_root = args.get(1).unwrap();
 
     let sav_path = PathBuf::from(sav_path);
+    let game_root = PathBuf::from(game_root);
+
     let sav_paths = 
     if sav_path.is_dir() {
         // Find all the sav files
@@ -30,8 +35,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     for sav_path in sav_paths {
         println!("Processing: {}", sav_path.display());
-        process_path(sav_path)?;
-        println!();
+        let data = process_path(sav_path)?;
+
+        let map_path = {
+            let mut path = game_root.clone();
+            path.push("maps");
+            path.push(&data.map_name);
+            path.set_extension("bsp");
+            path
+        };
+        println!("  Loading map from {}", map_path.display());
+        let bsp_data = std::fs::read(map_path)?;
+        let reader = BspReader::read(bsp_data);
+        let entity_string = resolve_map_entity_string(&reader);
+        let entities = BspEntity::parse_entities(&entity_string);
+        let num_entities = entities.len();
+
+        println!("  num_pairs: {}    num_entities: {}    remainder: {}    divided: {}", data.num_pairs, num_entities, data.num_pairs % num_entities, data.num_pairs as f64 / num_entities as f64);
+        //assert!(data.num_pairs % num_entities == 0, "num_pairs: {}    num_entities: {}    remainder: {}    divided: {}", data.num_pairs, num_entities, data.num_pairs % num_entities, data.num_pairs as f64 / num_entities as f64);
     }
 
     Ok(())
@@ -48,7 +69,13 @@ fn find_next_null(bytes: &[u8], start: usize) -> Option<usize> {
     None
 }
 
-fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<(), Box<dyn std::error::Error>> {
+struct SavData {
+    map_name: String,
+    num_pairs: usize,
+    num_worldspawn: usize,
+}
+
+fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::error::Error>> {
     let bytes = std::fs::read(sav_path)?;
 
     // Look for: XXBD01
@@ -117,8 +144,8 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<(), Box<dyn std::error::E
         //println!("  {:6X} {:8} {:8} {:8}  {}", offset, offset_distance, end_distance, end_to_next_offset, class_name);
     }
 
-    println!("There are {} pairs.", offsets_and_ends.len());
-    println!("There are {} pairs that have a worldspawn class name", num_world_spawn);
+    //println!("There are {} pairs.", offsets_and_ends.len());
+    //println!("There are {} pairs that have a worldspawn class name", num_world_spawn);
     // Doesn't work with all my saves...
     //assert!(offsets_and_ends.len() % num_world_spawn == 0, "Number of pairs {} are not divisible by {}", offsets_and_ends.len(), num_world_spawn);
 
@@ -127,7 +154,25 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<(), Box<dyn std::error::E
     let map_name_end = find_next_null(&bytes, map_name_start).unwrap();
     let map_name_bytes = &bytes[map_name_start..map_name_end];
     let map_name = std::str::from_utf8(map_name_bytes)?;
-    println!("Map name: {}", map_name);
+    //println!("Map name: {}", map_name);
 
-    Ok(())
+    Ok(SavData {
+        map_name: map_name.to_owned(),
+        num_pairs: offsets_and_ends.len(),
+        num_worldspawn: num_world_spawn,
+    })
+}
+
+fn resolve_map_entity_string<'a>(reader: &'a BspReader) -> Cow<'a, str> {
+    let entities_bytes = reader.read_entities();
+    match null_terminated_bytes_to_str(entities_bytes) {
+        Ok(entities) => Cow::Borrowed(entities),
+        Err(error) => {
+            println!("  WARNING: {:?}", error);
+            let start = error.str_error.valid_up_to();
+            let end = start + error.str_error.error_len().unwrap_or(1);
+            println!("           error bytes: {:?}", &entities_bytes[start..end]);
+            String::from_utf8_lossy(&entities_bytes[..error.end])
+        }
+    }
 }
