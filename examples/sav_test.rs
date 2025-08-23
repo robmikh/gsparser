@@ -31,9 +31,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for sav_path in sav_paths {
         println!("Processing: {}", sav_path.display());
         process_path(sav_path)?;
+        println!();
     }
 
     Ok(())
+}
+
+fn find_next_null(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut end = start;
+    while end < bytes.len() {
+        if bytes[end] == 0 {
+            return Some(end);
+        }
+        end += 1;
+    }
+    None
 }
 
 fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<(), Box<dyn std::error::Error>> {
@@ -52,24 +64,18 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<(), Box<dyn std::error::E
             let number = u16::from_le_bytes(current_bytes[0..2].try_into()?) as usize;
 
             let class_name_start = current + window_len;
-            let mut class_name_end = class_name_start;
-            while class_name_end < bytes.len() {
-                if bytes[class_name_end] == 0 {
-                    break;
-                }
-                class_name_end += 1;
-            }
+            let class_name_end = find_next_null(&bytes, class_name_start).unwrap();
             let class_name_bytes = &bytes[class_name_start..class_name_end];
             let class_name_result = std::str::from_utf8(class_name_bytes);
             if class_name_result.is_err() {
-                println!("WARNING: Assuming false positive at {:X} due to invalid utf8 class name.", current);
+                //println!("WARNING: Assuming false positive at {:X} due to invalid utf8 class name.", current);
                 current += 1;
                 continue;
             }
             let class_name = class_name_result?;
 
             if class_name.len() + 1 != number {
-                println!("WARNING: Assuming false positive at {:X} due to wrong class name length. ", current);
+                //println!("WARNING: Assuming false positive at {:X} due to wrong class name length. ", current);
                 current += 1;
                 continue;
             }
@@ -79,7 +85,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<(), Box<dyn std::error::E
                 first_offset_and_class_name = Some((current, class_name));
             }
 
-            println!("  {:6X} {:04} {}", current, number, class_name);
+            //println!("  {:6X} {:04} {}", current, number, class_name);
             current = class_name_end + 1;
         } else {
             current += 1;
@@ -108,13 +114,20 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<(), Box<dyn std::error::E
             num_world_spawn += 1;
         }
 
-        println!("  {:6X} {:8} {:8} {:8}  {}", offset, offset_distance, end_distance, end_to_next_offset, class_name);
+        //println!("  {:6X} {:8} {:8} {:8}  {}", offset, offset_distance, end_distance, end_to_next_offset, class_name);
     }
 
     println!("There are {} pairs.", offsets_and_ends.len());
     println!("There are {} pairs that have a worldspawn class name", num_world_spawn);
     // Doesn't work with all my saves...
     //assert!(offsets_and_ends.len() % num_world_spawn == 0, "Number of pairs {} are not divisible by {}", offsets_and_ends.len(), num_world_spawn);
+
+    // Find map name
+    let map_name_start = 0x106E;
+    let map_name_end = find_next_null(&bytes, map_name_start).unwrap();
+    let map_name_bytes = &bytes[map_name_start..map_name_end];
+    let map_name = std::str::from_utf8(map_name_bytes)?;
+    println!("Map name: {}", map_name);
 
     Ok(())
 }
