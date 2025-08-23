@@ -2,6 +2,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let sav_path = args.get(0).unwrap();
 
+    process_path(sav_path)?;
+
+    Ok(())
+}
+
+fn process_path(sav_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read(sav_path)?;
 
     // Sanity test
@@ -59,6 +65,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("There are {} pairs.", offsets_and_ends.len());
-
     Ok(())
 }
