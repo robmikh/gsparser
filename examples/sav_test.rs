@@ -1,13 +1,42 @@
+use std::path::{Path, PathBuf};
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let sav_path = args.get(0).unwrap();
 
-    process_path(sav_path)?;
+    let sav_path = PathBuf::from(sav_path);
+    let sav_paths = 
+    if sav_path.is_dir() {
+        // Find all the sav files
+        let mut sav_paths = Vec::new();
+        for entry in std::fs::read_dir(sav_path)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            if file_type.is_file() {
+                let path = entry.path();
+                if let Some(extension) = path.extension() {
+                    if let Some(extension) = extension.to_str() {
+                        if extension == "sav" {
+                            sav_paths.push(path);
+                        }
+                    }
+                }
+            }
+        }
+        sav_paths
+    } else {
+        vec![sav_path]
+    };
+    
+    for sav_path in sav_paths {
+        println!("Processing: {}", sav_path.display());
+        process_path(sav_path)?;
+    }
 
     Ok(())
 }
 
-fn process_path(sav_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read(sav_path)?;
 
     // Look for: XXBD01
@@ -31,10 +60,16 @@ fn process_path(sav_path: &str) -> Result<(), Box<dyn std::error::Error>> {
                 class_name_end += 1;
             }
             let class_name_bytes = &bytes[class_name_start..class_name_end];
-            let class_name = std::str::from_utf8(class_name_bytes)?;
+            let class_name_result = std::str::from_utf8(class_name_bytes);
+            if class_name_result.is_err() {
+                println!("WARNING: Assuming false positive at {:X} due to invalid utf8 class name.", current);
+                current += 1;
+                continue;
+            }
+            let class_name = class_name_result?;
 
             if class_name.len() + 1 != number {
-                println!("WARNING: Assuming false positive at {:X}. ", current);
+                println!("WARNING: Assuming false positive at {:X} due to wrong class name length. ", current);
                 current += 1;
                 continue;
             }
