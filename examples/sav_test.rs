@@ -189,23 +189,36 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     // Read door infos (?)
     let door_info_count_offset = 0x10EE;
     let num_door_infos = bytes[door_info_count_offset] as usize;
-    let door_infos_offset = door_info_count_offset + 1;
+    let mut door_info_offset = door_info_count_offset + 1;
+    let mut saw_non_default_size_clue = false;
     writeln!(&mut output, "Door infos:")?;
-    for i in 0..num_door_infos {
-        let door_info_offset = door_infos_offset + (i * 120);
-
-        let data = &bytes[door_info_offset..door_info_offset+120];
-
-        // Check first 15 bytes
-        let prefix = &data[..15];
+    for _ in 0..num_door_infos {
+        // Check the first 15 bytes
+        let prefix = &bytes[door_info_offset..door_info_offset+15];
         let expected = [0x00, 0x00, 0x00, 0x04, 0x00, 0xF1, 0x07, 0x03, 0x00, 0x00, 0x00, 0x40, 0x00, 0x1A, 0x0F];
-        if prefix != &expected {
-            writeln!(&mut output, "  WARNING: Door info prefix didn't match!")?;
-            writeln!(&mut output, "    found:")?;
-            writeln!(&mut output, "      {:02X?}", prefix)?;
-            writeln!(&mut output, "    expected:")?;
-            writeln!(&mut output, "      {:02X?}", expected)?;
+        // The first 7 seem to be constant
+        assert_eq!(&prefix[..7], &expected[..7]);
+        // The rest of the bytes after the size clude also seem to be constant
+        assert_eq!(&prefix[8..], &expected[8..]);
+        //if prefix != &expected {
+        //    writeln!(&mut output, "  WARNING: Door info prefix didn't match!")?;
+        //    writeln!(&mut output, "    found:")?;
+        //    writeln!(&mut output, "      {:02X?}", prefix)?;
+        //    writeln!(&mut output, "    expected:")?;
+        //    writeln!(&mut output, "      {:02X?}", expected)?;
+        //}
+        let size_clue = prefix[7];
+        if size_clue != 0x3 {
+            saw_non_default_size_clue = true;
         }
+        let size = match size_clue {
+            0x3 => 120,
+            0x2 => 112,
+            _ => panic!("Unknown size clue \"{:02X}\"!", size_clue),
+        };
+
+        let data = &bytes[door_info_offset..door_info_offset+size];
+        door_info_offset += size;
 
         let target_name_start = 15;
         let target_name_end = find_next_null(data, target_name_start).unwrap();
@@ -218,6 +231,9 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         let entity_map_name = std::str::from_utf8(entity_map_name_bytes)?;
 
         writeln!(&mut output, "  {}  ({})", target_name, entity_map_name)?;
+    }
+    if saw_non_default_size_clue {
+        writeln!(&mut output, "Saw non-default size clue!")?;
     }
 
 
