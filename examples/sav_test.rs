@@ -90,6 +90,17 @@ fn find_next_null(bytes: &[u8], start: usize) -> Option<usize> {
     None
 }
 
+fn find_next_non_null(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut end = start;
+    while end < bytes.len() {
+        if bytes[end] != 0 {
+            return Some(end);
+        }
+        end += 1;
+    }
+    None
+}
+
 struct SavData {
     map_name: String,
     num_entries: usize,
@@ -241,6 +252,29 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     assert_eq!(valvq_block_bytes[1], 0);
     let suffix = &valvq_block_bytes[valvq_block_len-5..];
     assert_eq!(suffix, b"VALVq");
+
+    // Next are a bunch of string inconsistently padded with 0s before we hit
+    // the first entity class name ("worldspawn")
+    let strings_offset = valvq_block_start + valvq_block_len + 1 + 16;
+    let mut current_strings_offset = strings_offset;
+    let mut num_strings = 0;
+    let first_worldspawn = first_offset_and_class_name.map(|(offset, _)| offset).unwrap();
+    writeln!(&mut output, "Strings:")?;
+    while current_strings_offset < first_worldspawn {
+        current_strings_offset = find_next_non_null(&bytes, current_strings_offset).unwrap();
+        let string_end = find_next_null(&bytes, current_strings_offset).unwrap();
+        let string_bytes = &bytes[current_strings_offset..string_end];
+        //println!("{:X}  {:02X?}", current_strings_offset, string_bytes);
+        let string = std::str::from_utf8(string_bytes)?;
+        writeln!(&mut output, "  {}", string)?;
+        current_strings_offset = string_end + 1;
+        num_strings += 1;
+
+        if string == "noise1" {
+            break;
+        }
+    }
+    writeln!(&mut output, "Found {} strings(s)", num_strings)?;
 
     Ok(SavData {
         map_name: map_name.to_owned(),
