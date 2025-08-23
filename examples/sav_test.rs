@@ -14,6 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: Is there a fixed or specified place to start?
     let mut current = 0;
     let window_len = 4;
+    let mut offsets_and_ends = Vec::new();
     while current + window_len < bytes.len() {
         let current_bytes = &bytes[current..current + window_len];
 
@@ -31,6 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let class_name_bytes = &bytes[class_name_start..class_name_end];
             let class_name = std::str::from_utf8(class_name_bytes)?;
             assert_eq!(class_name.len() + 1, number as usize, "\"{}\" at offset {} ({:X}) should be {} bytes long, is {}.", class_name, current, current, number, class_name.len() + 1);
+            offsets_and_ends.push((current, class_name_end));
 
             println!("  {:6X} {:04} {}", current, number, class_name);
             current = class_name_end + 1;
@@ -38,8 +40,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             current += 1;
         }
     }
+    
+    for pairs in offsets_and_ends.windows(2) {
+        let offset = pairs[0].0;
+        let end = pairs[0].1;
+        let offset_2 = pairs[1].0;
+        let end_2 = pairs[1].1;
 
+        let offset_distance = offset_2 - offset;
+        let end_distance = end_2 - end;
+        let end_to_next_offset = offset_2 - end;
 
+        let class_name_start = offset + window_len;
+        let class_name_bytes = &bytes[class_name_start..end];
+        let class_name = std::str::from_utf8(class_name_bytes)?;
+
+        println!("  {:6X} {:8} {:8} {:8}  {}", offset, offset_distance, end_distance, end_to_next_offset, class_name);
+    }
+
+    println!("There are {} pairs.", offsets_and_ends.len());
 
     Ok(())
 }
