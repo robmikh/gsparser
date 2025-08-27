@@ -149,28 +149,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     writeln!(&mut output, "")?;
 
     // Read tokens data
-    let tokens_data = {
-        let mut tokens_data = vec![0u8; tokens_size as usize];
-        reader.read_exact(&mut tokens_data)?;
-        tokens_data
-    };
-    let mut num = 0;
-    let tokens = {
-        let mut tokens = Vec::new();
-        let mut current = 0;
-        while current < tokens_data.len() {
-            if tokens_data[current] != 0 {
-                let start = current;
-                let end = find_next_null(&tokens_data, start).unwrap();
-                let string = str::from_utf8(&tokens_data[start..end])?;
-                tokens.push((num, string.to_owned()));
-                current = end;
-            }
-            current += 1;
-            num += 1;
-        }
-        tokens
-    };
+    let (num, tokens) = read_token_table(&mut reader, tokens_size as usize)?;
     writeln!(&mut output, "Tokens ({}):", tokens.len())?;
     for (offset, token) in &tokens {
         writeln!(&mut output, "  ({:4})  \"{}\"", offset, token)?;
@@ -233,7 +212,9 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     writeln!(&mut output, "Current Door Info Offset (Relative): {} (0x{:X})", offset, offset)?;
     writeln!(&mut output, "Current Door Info Offset: {} (0x{:X})", door_info_start + offset, door_info_start + offset)?;
 
+    let hl1_header_start = reader.position();
     let (hl1_name, hl1_header, hl1_block) = read_hl_block(&mut reader)?;
+    let hl1_block_start = hl1_header_start + hl1_header.len() as u64 + 4;
     writeln!(&mut output, "HL1 Name: \"{}\"", hl1_name)?;
 
     let (hl2_name, hl2_header, hl2_block) = read_hl_block(&mut reader)?;
@@ -250,12 +231,61 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         num_blocks += 1;
     }
     writeln!(&mut output, "Num HL blocks: {} (0x{:X})", num_blocks, num_blocks)?;
-
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
-    writeln!(&mut output, "")?;
     assert_eq!(offset as usize, bytes.len());
 
+    // Poke at the first HL1 block
+    let mut hl1_block_reader = std::io::Cursor::new(&hl1_block);
+    let magic = {
+        let mut magic = [0u8; 4];
+        hl1_block_reader.read_exact(&mut magic)?;
+        magic
+    };
+    assert_eq!(&magic, b"VALV");
+    let version = read_u32_le(&mut hl1_block_reader)?;
+    assert_eq!(version, 0x71);
+    let unknown_1 = read_u32_le(&mut hl1_block_reader)?;
+    writeln!(&mut output, "  unknown_1: {} (0x{:X})", unknown_1, unknown_1)?;
+    let unknown_2 = read_u32_le(&mut hl1_block_reader)?;
+    writeln!(&mut output, "  unknown_2: {} (0x{:X})", unknown_2, unknown_2)?;
+    let token_count = read_u32_le(&mut hl1_block_reader)?;
+    writeln!(&mut output, "  token_count: {} (0x{:X})", token_count, token_count)?;
+    let token_table_len = read_u32_le(&mut hl1_block_reader)?;
+    writeln!(&mut output, "  token_table_len: {} (0x{:X})", token_table_len, token_table_len)?;
+    let (num, tokens) = read_token_table(&mut hl1_block_reader, token_table_len as usize)?;
+    writeln!(&mut output, "Tokens ({}):", tokens.len())?;
+    for (offset, token) in &tokens {
+        writeln!(&mut output, "  ({:4})  \"{}\"", offset, token)?;
+    }
+    let num_message = if num == token_count { "matches token_count!" } else { "NO MATCH" };
+    writeln!(&mut output, "Num: {} ({})", num, num_message)?;
+    assert_eq!(num, token_count);
+
+    let offset = hl1_block_reader.position();
+    writeln!(&mut output, "Current HL1 Block Offset (Relative): {} (0x{:X})", offset, offset)?;
+    writeln!(&mut output, "Current HL1 Block Offset: {} (0x{:X})", hl1_block_start + offset, hl1_block_start + offset)?;
+
+    let mut num_etables = 0;
+    while (hl1_block_reader.position() as usize) < hl1_block.len() {
+        let offset = hl1_block_reader.position() + hl1_block_start;
+        let etable_struct = match read_struct(&mut hl1_block_reader, "ETABLE", &tokens, &mut output) {
+            Ok(result) => result,
+            Err(error) => {
+                writeln!(&mut output, "ERROR at offset {} (0x{:X}): {}", offset, offset, error)?;
+                break;
+            }
+        };
+        num_etables += 1;
+    }
+    writeln!(&mut output, "num_etables: {} ({})", num_etables, num_etables)?;
+    assert_eq!(num_etables, unknown_2);
+    let offset = hl1_block_reader.position();
+    writeln!(&mut output, "Current HL1 Block Offset (Relative): {} (0x{:X})", offset, offset)?;
+    writeln!(&mut output, "Current HL1 Block Offset: {} (0x{:X})", hl1_block_start + offset, hl1_block_start + offset)?;
+
+
+    writeln!(&mut output, "")?;
 
     // Look for: XXBD01
     // TODO: Is there a fixed or specified place to start?
@@ -453,7 +483,10 @@ fn read_struct<'a, R: Read>(mut reader: R, expected_name: &str, tokens: &'a [(u3
     assert_eq!(always_4, 4);
     let token_offset = read_u16_le(&mut reader)?;
     let token = tokens.iter().find(|(offset, _)|  *offset == token_offset as u32).map(|(_, token)| token.as_str()).unwrap();
-    assert_eq!(token, expected_name);
+    //assert_eq!(token, expected_name);
+    if token != expected_name {
+        return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("Expected \"{}\", found \"{}\"!", expected_name, token))));
+    }
     writeln!(output, "\"{}\":", token)?;
     let fields_saved = read_u16_le(&mut reader)?;
     writeln!(output, "  Fields: {} (0x{:X})", fields_saved, fields_saved)?;
@@ -498,4 +531,30 @@ fn read_hl_block<R: Read>(mut reader: R) -> Result<(String, Vec<u8>, Vec<u8>), B
     };
 
     Ok((hl1_name.to_owned(), hl1_header, hl1_block))
+}
+
+fn read_token_table<R: Read>(mut reader: R, tokens_size: usize) -> Result<(u32, Vec<(u32, String)>), Box<dyn std::error::Error>> {
+    let tokens_data = {
+        let mut tokens_data = vec![0u8; tokens_size];
+        reader.read_exact(&mut tokens_data)?;
+        tokens_data
+    };
+    let mut num = 0;
+    let tokens = {
+        let mut tokens = Vec::new();
+        let mut current = 0;
+        while current < tokens_data.len() {
+            if tokens_data[current] != 0 {
+                let start = current;
+                let end = find_next_null(&tokens_data, start).unwrap();
+                let string = str::from_utf8(&tokens_data[start..end])?;
+                tokens.push((num, string.to_owned()));
+                current = end;
+            }
+            current += 1;
+            num += 1;
+        }
+        tokens
+    };
+    Ok((num, tokens))
 }
