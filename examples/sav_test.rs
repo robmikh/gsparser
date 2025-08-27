@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt::Write, path::{Path, PathBuf}};
+use std::{borrow::Cow, fmt::Write, io::Read, path::{Path, PathBuf}};
 
 use gsparser::{bsp::{BspEntity, BspReader}, mdl::null_terminated_bytes_to_str};
 
@@ -110,10 +110,79 @@ struct SavData {
     output: String,
 }
 
+fn read_u32_le<R: Read>(mut reader: R) -> std::io::Result<u32> {
+    let mut value = [0u8; 4];
+    reader.read_exact(&mut value)?;
+    Ok(u32::from_le_bytes(value))
+}
+
 fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::error::Error>> {
     let bytes = std::fs::read(sav_path)?;
 
     let mut output = String::new();
+
+    let mut reader = std::io::Cursor::new(&bytes);
+    // Header
+    let magic = {
+        let mut magic = [0u8; 4];
+        reader.read_exact(&mut magic)?;
+        magic
+    };
+    assert_eq!(&magic, b"JSAV");
+    let version = read_u32_le(&mut reader)?;
+    assert_eq!(version, 0x71);
+    let door_info_len = read_u32_le(&mut reader)?;
+    let token_count = read_u32_le(&mut reader)?;
+    let tokens_size = read_u32_le(&mut reader)?;
+    writeln!(&mut output, "Header:")?;
+    writeln!(&mut output, "  magic: {:X?}", magic)?;
+    writeln!(&mut output, "  version: 0x{:X}", version)?;
+    writeln!(&mut output, "  door_info_len: {} (0x{:X})", door_info_len, door_info_len)?;
+    writeln!(&mut output, "  token_count: {} (0x{:X})", token_count, token_count)?;
+    writeln!(&mut output, "  tokens_size: {} (0x{:X})", tokens_size, tokens_size)?;
+    writeln!(&mut output, "")?;
+
+    // Read tokens data
+    let tokens_data = {
+        let mut tokens_data = vec![0u8; tokens_size as usize];
+        reader.read_exact(&mut tokens_data)?;
+        tokens_data
+    };
+    let mut num = 0;
+    let tokens = {
+        let mut tokens = Vec::new();
+        let mut current = 0;
+        while current < tokens_data.len() {
+            if tokens_data[current] != 0 {
+                let start = current;
+                let end = find_next_null(&tokens_data, start).unwrap();
+                let string = str::from_utf8(&tokens_data[start..end])?;
+                tokens.push(string.to_owned());
+                current = end;
+            }
+            current += 1;
+            num += 1;
+        }
+        tokens
+    };
+    writeln!(&mut output, "Tokens ({}):", tokens.len())?;
+    for token in tokens {
+        writeln!(&mut output, "  \"{}\"", token)?;
+    }
+    let num_message = if num == token_count { "matches token_count!" } else { "NO MATCH" };
+    writeln!(&mut output, "Num: {} ({})", num, num_message)?;
+    let offset = reader.position();
+    writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
+    writeln!(&mut output, "")?;
+    assert_eq!(num, token_count);
+
+    // Read "door info"
+    let mut door_info_bytes = {
+        let mut door_info_bytes = vec![0u8; door_info_len as usize];
+        reader.read_exact(&mut door_info_bytes)?;
+        door_info_bytes
+    };
+    let door_info_offset = process_door_infos(&door_info_bytes, 0x94, &mut output)?;
 
     // Look for: XXBD01
     // TODO: Is there a fixed or specified place to start?
@@ -123,6 +192,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     let mut first_offset_and_class_name = None;
     let mut entries = Vec::new();
     let mut world_spawn_indices = Vec::new();
+    writeln!(&mut output, "XXBD01 Matches:")?;
     while current + window_len < bytes.len() {
         let current_bytes = &bytes[current..current + window_len];
 
@@ -199,48 +269,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
 
     // Read door infos (?)
     let door_info_count_offset = 0x10EE;
-    let num_door_infos = bytes[door_info_count_offset] as usize;
-    let mut door_info_offset = door_info_count_offset + 1;
-    let mut saw_non_default_size_clue = false;
-    writeln!(&mut output, "Door infos:")?;
-    for _ in 0..num_door_infos {
-        // Check the first 15 bytes
-        let prefix = &bytes[door_info_offset..door_info_offset+15];
-        let expected = [0x00, 0x00, 0x00, 0x04, 0x00, 0xF1, 0x07, 0x03, 0x00, 0x00, 0x00, 0x40, 0x00, 0x1A, 0x0F];
-        // The first 7 seem to be constant
-        assert_eq!(&prefix[..7], &expected[..7]);
-        // The rest of the bytes after the size clude also seem to be constant
-        assert_eq!(&prefix[8..], &expected[8..]);
-        let size_clue = prefix[7];
-        if size_clue != 0x3 {
-            saw_non_default_size_clue = true;
-        }
-        let size = match size_clue {
-            0x3 => 120,
-            0x2 => 112,
-            _ => panic!("Unknown size clue \"{:02X}\"!", size_clue),
-        };
-
-        let data = &bytes[door_info_offset..door_info_offset+size];
-        door_info_offset += size;
-
-        let target_name_start = 15;
-        let target_name_end = find_next_null(data, target_name_start).unwrap();
-        let target_name_bytes = &data[target_name_start..target_name_end];
-        let target_name = std::str::from_utf8(target_name_bytes)?;
-        assert!(!target_name.is_empty());
-
-        let entity_map_name_start = 83;
-        let entity_map_name_end = find_next_null(data, entity_map_name_start).unwrap();
-        let entity_map_name_bytes = &data[entity_map_name_start..entity_map_name_end];
-        let entity_map_name = std::str::from_utf8(entity_map_name_bytes)?;
-        assert!(!entity_map_name.is_empty());
-
-        writeln!(&mut output, "  {}  ({})", target_name, entity_map_name)?;
-    }
-    if saw_non_default_size_clue {
-        writeln!(&mut output, "Saw non-default size clue!")?;
-    }
+    let door_info_offset = process_door_infos(&bytes, door_info_count_offset, &mut output)?;
 
     // The next chunk of data contains the map name, the substrings "HL1" and
     // "sav", and something that ends in "VALVq".
@@ -298,4 +327,50 @@ fn resolve_map_entity_string<'a>(reader: &'a BspReader) -> Cow<'a, str> {
             String::from_utf8_lossy(&entities_bytes[..error.end])
         }
     }
+}
+
+fn process_door_infos(bytes: &[u8], start: usize, output: &mut String) -> Result<usize, Box<dyn std::error::Error>> {
+    let num_door_infos = bytes[start] as usize;
+    let mut door_info_offset = start + 1;
+    let mut saw_non_default_size_clue = false;
+    writeln!(output, "Door infos:")?;
+    for _ in 0..num_door_infos {
+        // Check the first 15 bytes
+        let prefix = &bytes[door_info_offset..door_info_offset+15];
+        let expected = [0x00, 0x00, 0x00, 0x04, 0x00, 0xF1, 0x07, 0x03, 0x00, 0x00, 0x00, 0x40, 0x00, 0x1A, 0x0F];
+        // The first 7 seem to be constant
+        assert_eq!(&prefix[..7], &expected[..7]);
+        // The rest of the bytes after the size clude also seem to be constant
+        assert_eq!(&prefix[8..], &expected[8..]);
+        let size_clue = prefix[7];
+        if size_clue != 0x3 {
+            saw_non_default_size_clue = true;
+        }
+        let size = match size_clue {
+            0x3 => 120,
+            0x2 => 112,
+            _ => panic!("Unknown size clue \"{:02X}\"!", size_clue),
+        };
+
+        let data = &bytes[door_info_offset..door_info_offset+size];
+        door_info_offset += size;
+
+        let target_name_start = 15;
+        let target_name_end = find_next_null(data, target_name_start).unwrap();
+        let target_name_bytes = &data[target_name_start..target_name_end];
+        let target_name = std::str::from_utf8(target_name_bytes)?;
+        assert!(!target_name.is_empty());
+
+        let entity_map_name_start = 83;
+        let entity_map_name_end = find_next_null(data, entity_map_name_start).unwrap();
+        let entity_map_name_bytes = &data[entity_map_name_start..entity_map_name_end];
+        let entity_map_name = std::str::from_utf8(entity_map_name_bytes)?;
+        assert!(!entity_map_name.is_empty());
+
+        writeln!(output, "  {}  ({})", target_name, entity_map_name)?;
+    }
+    if saw_non_default_size_clue {
+        writeln!(output, "Saw non-default size clue!")?;
+    }
+    Ok(door_info_offset)
 }
