@@ -202,6 +202,38 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     writeln!(&mut output, "Current Door Info Offset (Relative): {} (0x{:X})", offset, offset)?;
     writeln!(&mut output, "Current Door Info Offset: {} (0x{:X})", door_info_start + offset, door_info_start + offset)?;
 
+    // We should have a 'm_listCount' with the number of door infos
+    let list_count_bytes_source = global_struct.iter().find(|(name, _)| *name == "m_listCount").map(|(_, bytes)| bytes).unwrap();
+    let mut list_count_bytes = [0u8; 4];
+    list_count_bytes.copy_from_slice(list_count_bytes_source);
+    let list_count = u32::from_le_bytes(list_count_bytes);
+    let mut door_infos = Vec::with_capacity(list_count as usize);
+    for _ in 0..list_count {
+        let gent_struct = read_struct(&mut door_info_reader, "GENT", &tokens, &mut output)?;
+        
+        let name_bytes = gent_struct.iter().find(|(name, _)| *name == "name").map(|(_, bytes)| bytes).unwrap();
+        let name_end = find_next_null(&name_bytes, 0).unwrap_or(name_bytes.len());
+        let name = str::from_utf8(&name_bytes[0..name_end])?;
+
+        let level_name_bytes = gent_struct.iter().find(|(name, _)| *name == "levelName").map(|(_, bytes)| bytes).unwrap();
+        let level_name_end = find_next_null(&level_name_bytes, 0).unwrap_or(level_name_bytes.len());
+        let level_name = str::from_utf8(&level_name_bytes[0..level_name_end])?;
+
+        let state_bytes = gent_struct.iter().find(|(name, _)| *name == "state").map(|(_, bytes)| bytes.clone());
+
+        door_infos.push((name.to_owned(), level_name.to_owned(), state_bytes.clone()));
+    }
+    writeln!(&mut output, "Door infos ({}):", list_count)?;
+    for (name, level_name, state_bytes) in &door_infos {
+        writeln!(&mut output, "  {:24} ({:10}) ({:02X?})", name, level_name, state_bytes)?;
+    }
+
+    //let num_state_files = read_u16_le(&mut reader)?;
+    let offset = door_info_reader.position();
+    writeln!(&mut output, "Current Door Info Offset (Relative): {} (0x{:X})", offset, offset)?;
+    writeln!(&mut output, "Current Door Info Offset: {} (0x{:X})", door_info_start + offset, door_info_start + offset)?;
+
+
     writeln!(&mut output, "")?;
 
 
