@@ -190,43 +190,17 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     };
     let _ = process_door_infos(&door_info_bytes, 0x94, &mut output)?;
     let mut door_info_reader = std::io::Cursor::new(&door_info_bytes);
-    let always_4 = read_u16_le(&mut door_info_reader)?;
-    assert_eq!(always_4, 4);
-    let token_offset = read_u16_le(&mut door_info_reader)?;
-    let token = tokens.iter().find(|(offset, _)|  *offset == token_offset as u32).map(|(_, token)| token.as_str()).unwrap();
-    assert_eq!(token, "GameHeader");
-    let fields_saved = read_u16_le(&mut door_info_reader)?;
-    writeln!(&mut output, "Fields: {} (0x{:X})", fields_saved, fields_saved)?;
-    // Not what this short is for
-    let unknown = read_u16_le(&mut door_info_reader)?;
-    assert_eq!(unknown, 0);
-
-    // Read each field
-    let mut fields = Vec::with_capacity(fields_saved as usize);
-    for _ in 0..fields_saved {
-        let payload_size = read_u16_le(&mut door_info_reader)?;
-        let token_offset = read_u16_le(&mut door_info_reader)?;
-        println!("token_offset: {}", token_offset);
-        let token = tokens.iter().find(|(offset, _)|  *offset == token_offset as u32).map(|(_, token)| token.as_str()).unwrap();
-
-        let mut payload = vec![0u8; payload_size as usize];
-        door_info_reader.read_exact(&mut payload)?;
-        fields.push((token, payload));
-    }
-    for (field_name, payload) in &fields {
-        writeln!(&mut output, "  \"{}\" {:02X?}", field_name, payload)?;
-    }
+    let game_header_struct = read_struct(&mut door_info_reader, "GameHeader", &tokens, &mut output)?;
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
     let offset = door_info_reader.position();
     writeln!(&mut output, "Current Door Info Offset (Relative): {} (0x{:X})", offset, offset)?;
     writeln!(&mut output, "Current Door Info Offset: {} (0x{:X})", door_info_start + offset, door_info_start + offset)?;
 
-    let always_4 = read_u16_le(&mut door_info_reader)?;
-    assert_eq!(always_4, 4);
-    let token_offset = read_u16_le(&mut door_info_reader)?;
-    let token = tokens.iter().find(|(offset, _)|  *offset == token_offset as u32).map(|(_, token)| token.as_str()).unwrap();
-    assert_eq!(token, "GLOBAL");
+    let global_struct = read_struct(&mut door_info_reader, "GLOBAL", &tokens, &mut output)?;
+    let offset = door_info_reader.position();
+    writeln!(&mut output, "Current Door Info Offset (Relative): {} (0x{:X})", offset, offset)?;
+    writeln!(&mut output, "Current Door Info Offset: {} (0x{:X})", door_info_start + offset, door_info_start + offset)?;
 
     writeln!(&mut output, "")?;
 
@@ -420,4 +394,35 @@ fn process_door_infos(bytes: &[u8], start: usize, output: &mut String) -> Result
         writeln!(output, "Saw non-default size clue!")?;
     }
     Ok(door_info_offset)
+}
+
+fn read_struct<'a, R: Read>(mut reader: R, expected_name: &str, tokens: &'a [(u32, String)], output: &mut String) -> Result<Vec<(&'a str, Vec<u8>)>, Box<dyn std::error::Error>> {
+    let always_4 = read_u16_le(&mut reader)?;
+    assert_eq!(always_4, 4);
+    let token_offset = read_u16_le(&mut reader)?;
+    let token = tokens.iter().find(|(offset, _)|  *offset == token_offset as u32).map(|(_, token)| token.as_str()).unwrap();
+    assert_eq!(token, expected_name);
+    writeln!(output, "\"{}\":", token)?;
+    let fields_saved = read_u16_le(&mut reader)?;
+    writeln!(output, "  Fields: {} (0x{:X})", fields_saved, fields_saved)?;
+    // Not what this short is for
+    let unknown = read_u16_le(&mut reader)?;
+    assert_eq!(unknown, 0);
+
+    // Read each field
+    let mut fields = Vec::with_capacity(fields_saved as usize);
+    for _ in 0..fields_saved {
+        let payload_size = read_u16_le(&mut reader)?;
+        let token_offset = read_u16_le(&mut reader)?;
+        let token = tokens.iter().find(|(offset, _)|  *offset == token_offset as u32).map(|(_, token)| token.as_str()).unwrap();
+
+        let mut payload = vec![0u8; payload_size as usize];
+        reader.read_exact(&mut payload)?;
+        fields.push((token, payload));
+    }
+    for (field_name, payload) in &fields {
+        writeln!(output, "    \"{}\" {:02X?}", field_name, payload)?;
+    }
+
+    Ok(fields)
 }
