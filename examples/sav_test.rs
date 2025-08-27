@@ -233,7 +233,26 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     writeln!(&mut output, "Current Door Info Offset (Relative): {} (0x{:X})", offset, offset)?;
     writeln!(&mut output, "Current Door Info Offset: {} (0x{:X})", door_info_start + offset, door_info_start + offset)?;
 
+    let hl1_header_len = 260;
+    let hl1_header = {
+        let mut hl1_header = vec![0u8; hl1_header_len as usize];
+        reader.read_exact(&mut hl1_header)?;
+        hl1_header
+    };
+    let hl1_name_start = 0;
+    let hl1_name_end = find_next_null(&hl1_header, hl1_name_start).unwrap_or(hl1_header.len());
+    let hl1_name = str::from_utf8(&hl1_header[hl1_name_start..hl1_name_end])?;
+    writeln!(&mut output, "HL1 Name: \"{}\"", hl1_name)?;
 
+    let hl1_block_len = read_u32_le(&mut reader)?;
+    let hl1_block = {
+        let mut hl1_block = vec![0u8; hl1_block_len as usize];
+        reader.read_exact(&mut hl1_block)?;
+        hl1_block
+    };
+
+    let offset = reader.position();
+    writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
     writeln!(&mut output, "")?;
 
 
