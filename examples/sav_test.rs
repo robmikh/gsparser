@@ -116,6 +116,12 @@ fn read_u32_le<R: Read>(mut reader: R) -> std::io::Result<u32> {
     Ok(u32::from_le_bytes(value))
 }
 
+fn read_u16_le<R: Read>(mut reader: R) -> std::io::Result<u16> {
+    let mut value = [0u8; 2];
+    reader.read_exact(&mut value)?;
+    Ok(u16::from_le_bytes(value))
+}
+
 fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::error::Error>> {
     let bytes = std::fs::read(sav_path)?;
 
@@ -157,7 +163,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
                 let start = current;
                 let end = find_next_null(&tokens_data, start).unwrap();
                 let string = str::from_utf8(&tokens_data[start..end])?;
-                tokens.push(string.to_owned());
+                tokens.push((num, string.to_owned()));
                 current = end;
             }
             current += 1;
@@ -166,23 +172,64 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         tokens
     };
     writeln!(&mut output, "Tokens ({}):", tokens.len())?;
-    for token in tokens {
-        writeln!(&mut output, "  \"{}\"", token)?;
+    for (offset, token) in &tokens {
+        writeln!(&mut output, "  ({:4})  \"{}\"", offset, token)?;
     }
     let num_message = if num == token_count { "matches token_count!" } else { "NO MATCH" };
     writeln!(&mut output, "Num: {} ({})", num, num_message)?;
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
-    writeln!(&mut output, "")?;
     assert_eq!(num, token_count);
 
     // Read "door info"
-    let mut door_info_bytes = {
+    let door_info_start = offset;
+    let door_info_bytes = {
         let mut door_info_bytes = vec![0u8; door_info_len as usize];
         reader.read_exact(&mut door_info_bytes)?;
         door_info_bytes
     };
-    let door_info_offset = process_door_infos(&door_info_bytes, 0x94, &mut output)?;
+    let _ = process_door_infos(&door_info_bytes, 0x94, &mut output)?;
+    let mut door_info_reader = std::io::Cursor::new(&door_info_bytes);
+    let always_4 = read_u16_le(&mut door_info_reader)?;
+    assert_eq!(always_4, 4);
+    let token_offset = read_u16_le(&mut door_info_reader)?;
+    let token = tokens.iter().find(|(offset, _)|  *offset == token_offset as u32).map(|(_, token)| token.as_str()).unwrap();
+    assert_eq!(token, "GameHeader");
+    let fields_saved = read_u16_le(&mut door_info_reader)?;
+    writeln!(&mut output, "Fields: {} (0x{:X})", fields_saved, fields_saved)?;
+    // Not what this short is for
+    let unknown = read_u16_le(&mut door_info_reader)?;
+    assert_eq!(unknown, 0);
+
+    // Read each field
+    let mut fields = Vec::with_capacity(fields_saved as usize);
+    for _ in 0..fields_saved {
+        let payload_size = read_u16_le(&mut door_info_reader)?;
+        let token_offset = read_u16_le(&mut door_info_reader)?;
+        println!("token_offset: {}", token_offset);
+        let token = tokens.iter().find(|(offset, _)|  *offset == token_offset as u32).map(|(_, token)| token.as_str()).unwrap();
+
+        let mut payload = vec![0u8; payload_size as usize];
+        door_info_reader.read_exact(&mut payload)?;
+        fields.push((token, payload));
+    }
+    for (field_name, payload) in &fields {
+        writeln!(&mut output, "  \"{}\" {:02X?}", field_name, payload)?;
+    }
+    let offset = reader.position();
+    writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
+    let offset = door_info_reader.position();
+    writeln!(&mut output, "Current Door Info Offset (Relative): {} (0x{:X})", offset, offset)?;
+    writeln!(&mut output, "Current Door Info Offset: {} (0x{:X})", door_info_start + offset, door_info_start + offset)?;
+
+    let always_4 = read_u16_le(&mut door_info_reader)?;
+    assert_eq!(always_4, 4);
+    let token_offset = read_u16_le(&mut door_info_reader)?;
+    let token = tokens.iter().find(|(offset, _)|  *offset == token_offset as u32).map(|(_, token)| token.as_str()).unwrap();
+    assert_eq!(token, "GLOBAL");
+
+    writeln!(&mut output, "")?;
+
 
     // Look for: XXBD01
     // TODO: Is there a fixed or specified place to start?
