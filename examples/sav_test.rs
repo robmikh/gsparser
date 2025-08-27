@@ -233,27 +233,28 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     writeln!(&mut output, "Current Door Info Offset (Relative): {} (0x{:X})", offset, offset)?;
     writeln!(&mut output, "Current Door Info Offset: {} (0x{:X})", door_info_start + offset, door_info_start + offset)?;
 
-    let hl1_header_len = 260;
-    let hl1_header = {
-        let mut hl1_header = vec![0u8; hl1_header_len as usize];
-        reader.read_exact(&mut hl1_header)?;
-        hl1_header
-    };
-    let hl1_name_start = 0;
-    let hl1_name_end = find_next_null(&hl1_header, hl1_name_start).unwrap_or(hl1_header.len());
-    let hl1_name = str::from_utf8(&hl1_header[hl1_name_start..hl1_name_end])?;
+    let (hl1_name, hl1_header, hl1_block) = read_hl_block(&mut reader)?;
     writeln!(&mut output, "HL1 Name: \"{}\"", hl1_name)?;
 
-    let hl1_block_len = read_u32_le(&mut reader)?;
-    let hl1_block = {
-        let mut hl1_block = vec![0u8; hl1_block_len as usize];
-        reader.read_exact(&mut hl1_block)?;
-        hl1_block
-    };
+    let (hl2_name, hl2_header, hl2_block) = read_hl_block(&mut reader)?;
+    writeln!(&mut output, "HL2 Name: \"{}\"", hl2_name)?;
+
+    let (hl3_name, hl3_header, hl3_block) = read_hl_block(&mut reader)?;
+    writeln!(&mut output, "HL3 Name: \"{}\"", hl3_name)?;
+
+    // How many are there?
+    let mut num_blocks = 3;
+    while (reader.position() as usize) < bytes.len() {
+        let (hl1_name, hl1_header, hl1_block) = read_hl_block(&mut reader)?;
+        writeln!(&mut output, "HLX Name: \"{}\"", hl1_name)?;
+        num_blocks += 1;
+    }
+    writeln!(&mut output, "Num HL blocks: {} (0x{:X})", num_blocks, num_blocks)?;
 
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
     writeln!(&mut output, "")?;
+    assert_eq!(offset as usize, bytes.len());
 
 
     // Look for: XXBD01
@@ -476,4 +477,25 @@ fn read_struct<'a, R: Read>(mut reader: R, expected_name: &str, tokens: &'a [(u3
     }
 
     Ok(fields)
+}
+
+fn read_hl_block<R: Read>(mut reader: R) -> Result<(String, Vec<u8>, Vec<u8>), Box<dyn std::error::Error>> {
+    let hl1_header_len = 260;
+    let hl1_header = {
+        let mut hl1_header = vec![0u8; hl1_header_len as usize];
+        reader.read_exact(&mut hl1_header)?;
+        hl1_header
+    };
+    let hl1_name_start = 0;
+    let hl1_name_end = find_next_null(&hl1_header, hl1_name_start).unwrap_or(hl1_header.len());
+    let hl1_name = str::from_utf8(&hl1_header[hl1_name_start..hl1_name_end])?;
+
+    let hl1_block_len = read_u32_le(&mut reader)?;
+    let hl1_block = {
+        let mut hl1_block = vec![0u8; hl1_block_len as usize];
+        reader.read_exact(&mut hl1_block)?;
+        hl1_block
+    };
+
+    Ok((hl1_name.to_owned(), hl1_header, hl1_block))
 }
