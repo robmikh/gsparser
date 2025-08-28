@@ -312,7 +312,9 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         // The first should be ENTVARS which should have a class name
         let class_name = read_str_field(&entity[0].1, "classname")?;
         writeln!(&mut output, "  {}", class_name)?;
-        record_fields(&entity[0].1, "    ", &mut output)?;
+        for fragment in &entity {
+            record_fields(&fragment.1, "    ", &mut output)?;
+        }
     }
 
 
@@ -643,7 +645,7 @@ fn record_fields<'a>(fields: &'a [(&str, Vec<u8>)], prefix: &str, output: &mut S
         match *field_name {
             "classname" | "model" | "message" | "netname" => record_str_field(field_data, output)?,
             "modelindex" => record_u32_field(field_data, output)?,
-            "absmin" | "absmax" | "origin" | "angles" | "v_angle" | "mins" | "maxs" | "viewofs" | "size" => record_vec3_field(field_data, output)?,
+            "absmin" | "absmax" | "origin" | "angles" | "v_angle" | "mins" | "maxs" | "view_ofs" | "size" | "m_HackedGunPos" => record_vec3_field(field_data, output)?,
             _ => write!(output, "{:02X?}", field_data)?,
         }
         writeln!(output)?;
