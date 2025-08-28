@@ -282,13 +282,28 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     let entity_count = read_u32_field(&save_header, "entityCount").unwrap();
     println!("entity_count: {}", entity_count);
     println!("num_etables: {}", num_etables);
-    for i in 0..entity_count {
-        println!("  {}", i);
+    //for i in 0..entity_count {
+    let mut seen_entities = 0;
+    let mut num_structs = 0;
+    while seen_entities < entity_count {
+        println!("  {}", seen_entities);
+        println!("  num_structs: {}", num_structs);
         let offset = hl1_block_reader.position() + hl1_block_start;
         println!("  offset: 0x{:X}", offset);
-        let (ty, entity_vars) = read_struct(&mut hl1_block_reader, None, &tokens, &mut output)?;
+        let (ty, entity_vars) = match read_struct(&mut hl1_block_reader, None, &tokens, &mut output) {
+            Ok(result) => result,
+            Err(error) => {
+                writeln!(&mut output, "ERROR: {}", error)?;
+                break;
+            }
+        };
         println!("  ty: {}", ty);
-        println!("{:?}", entity_vars);
+        //println!("{:?}", entity_vars);
+        if ty == "ENTVARS" {
+            seen_entities += 1;
+            println!();
+        }
+        num_structs += 1;
     }
 
     let offset = hl1_block_reader.position();
