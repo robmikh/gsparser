@@ -6,7 +6,11 @@ use gsparser::{
     bsp::{BspEntity, BspReader},
     mdl::null_terminated_bytes_to_str,
 };
-use std::{borrow::Cow, collections::{HashMap, HashSet}, path::PathBuf};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -33,7 +37,7 @@ fn main() {
                     if let Some(entities) = model_references.get_mut(&model_index) {
                         entities.push(entity_index);
                     } else {
-                        let entities = vec![entity_index,];
+                        let entities = vec![entity_index];
                         model_references.insert(model_index, entities);
                     }
                 }
@@ -50,7 +54,8 @@ fn main() {
                 model_infos.push((model_index, entities));
             }
         }
-        model_infos.sort_by(|(model_index_1, _), (model_index_2, _)| model_index_1.cmp(model_index_2));
+        model_infos
+            .sort_by(|(model_index_1, _), (model_index_2, _)| model_index_1.cmp(model_index_2));
 
         if !model_infos.is_empty() {
             map_info.push((map_name.to_string(), model_infos, num_entities));
