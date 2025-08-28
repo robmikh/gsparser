@@ -88,6 +88,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Some of these we skip because they are never present at runtime (e.g. lights).
                 // Others we skip becuase they aren't represented in the map (e.g. player).
                 // The last category we skip are entities that can be removed at runtime (e.g. trigger_once).
+                // POSTMORTEM: Nearly every entity can be removed at runtime... this won't work. It's probably the case
+                //             that when loading a save file in Half-Life, no entities are spawned via the information
+                //             in the bsp. Instead, all information about what entities to spawn and what their properties
+                //             are are in the save file. Unless this information is in other parts of the save file...
                 match class_name {
                     "light" | "player" | "light_spot" | "info_node" | "trigger_once" | "trigger_auto" | "item_suit" | "func_breakable" | "env_explosion" | "env_shooter" | "scripted_sentence" => true,
                     _ => false,
