@@ -81,6 +81,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
 
+        let mut map_entities_iter = entities.iter();
+        let mut sav_entities_iter = data.entities.iter();
+        while let Some((sav_entity, _)) = sav_entities_iter.next() {
+            let should_skip = |class_name: &str| -> bool {
+                // Some of these we skip because they are never present at runtime (e.g. lights).
+                // Others we skip becuase they aren't represented in the map (e.g. player).
+                // The last category we skip are entities that can be removed at runtime (e.g. trigger_once).
+                match class_name {
+                    "light" | "player" | "light_spot" | "info_node" | "trigger_once" | "trigger_auto" | "item_suit" | "func_breakable" | "env_explosion" | "env_shooter" | "scripted_sentence" => true,
+                    _ => false,
+                }
+            };
+            if should_skip(&sav_entity) {
+                continue;
+            }
+
+            let mut found_match = false;
+            while let Some(map_entity) = map_entities_iter.next() {
+                let map_entity_class_name = map_entity.0["classname"];
+                // Skip-able 
+                if should_skip(&map_entity_class_name) {
+                    continue;
+                }
+                if map_entity_class_name == sav_entity.as_str() {
+                    found_match = true;
+                    break;
+                } else {
+                    panic!("Unskippable entity \"{}\" found when looking for \"{}\"!", map_entity_class_name, sav_entity);
+                }
+            }
+            if !found_match {
+                panic!("Match not found!");
+            }
+        }
+
         let sav_output_path = {
             let mut path = output_path.clone();
             path.push(sav_path.file_name().unwrap().to_str().unwrap());
@@ -124,6 +159,7 @@ struct SavData {
     entries: Vec<(usize, String)>,
     world_spawn_indices: Vec<usize>,
     output: String,
+    entities: Vec<(String, Vec<(String, Vec<(String, Vec<u8>)>)>)>,
 }
 
 fn read_u32_le<R: Read>(mut reader: R) -> std::io::Result<u32> {
@@ -432,11 +468,11 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         }
     }
     writeln!(&mut output, "Entities:")?;
-    for entity in entities {
+    for entity in &entities {
         // The first should be ENTVARS which should have a class name
         let class_name = read_str_field(&entity[0].1, "classname")?;
         writeln!(&mut output, "  {}", class_name)?;
-        for fragment in &entity {
+        for fragment in entity {
             writeln!(&mut output, "    {}", fragment.0)?;
             record_fields(&fragment.1, "      ", &mut output)?;
         }
@@ -599,6 +635,26 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     }
     writeln!(&mut output, "Found {} strings(s)", num_strings)?;
 
+    let entities = {
+        let mut new_entities = Vec::with_capacity(entities.len());
+        for fragments in entities {
+            // Read class name
+            let class_name = read_str_field(&fragments[0].1, "classname")?.to_owned();
+
+            let mut new_fragments = Vec::with_capacity(fragments.len());
+            for (fragment_name, fields) in fragments {
+                let mut new_fields = Vec::with_capacity(fields.len());
+                for (field_name, field_data) in fields {
+                    new_fields.push((field_name.to_owned(), field_data));
+                }
+                new_fragments.push((fragment_name.to_owned(), new_fields));
+            }
+
+            new_entities.push((class_name, new_fragments));
+        }
+        new_entities
+    };
+
     Ok(SavData {
         map_name: map_name.to_owned(),
         num_entries,
@@ -606,6 +662,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         entries,
         world_spawn_indices,
         output,
+        entities,
     })
 }
 
