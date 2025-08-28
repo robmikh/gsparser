@@ -280,16 +280,13 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
 
     // Read "ENTVARS" structs
     let entity_count = read_u32_field(&save_header, "entityCount").unwrap();
-    println!("entity_count: {}", entity_count);
-    println!("num_etables: {}", num_etables);
-    //for i in 0..entity_count {
-    let mut seen_entities = 0;
-    let mut num_structs = 0;
-    while seen_entities < entity_count {
-        println!("  {}", seen_entities);
-        println!("  num_structs: {}", num_structs);
-        let offset = hl1_block_reader.position() + hl1_block_start;
-        println!("  offset: 0x{:X}", offset);
+    //println!("entity_count: {}", entity_count);
+    //println!("num_etables: {}", num_etables);
+    let mut current_entity: Option<Vec<(&str, Vec<(&str, Vec<u8>)>)>> = None;
+    let mut entities = Vec::with_capacity(entity_count as usize);
+    while entities.len() < entity_count as usize {
+        //let offset = hl1_block_reader.position() + hl1_block_start;
+        //println!("  offset: 0x{:X}", offset);
         let (ty, entity_vars) = match read_struct(&mut hl1_block_reader, None, &tokens, &mut output) {
             Ok(result) => result,
             Err(error) => {
@@ -297,14 +294,27 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
                 break;
             }
         };
-        println!("  ty: {}", ty);
-        //println!("{:?}", entity_vars);
         if ty == "ENTVARS" {
-            seen_entities += 1;
-            println!();
+            if let Some(current_entity) = current_entity.take() {
+                entities.push(current_entity);
+            }
         }
-        num_structs += 1;
+        if let Some(current_entity) = current_entity.as_mut() {
+            current_entity.push((ty, entity_vars));
+        } else {
+            let mut entity_fragments = Vec::new();
+            entity_fragments.push((ty, entity_vars));
+            current_entity = Some(entity_fragments);
+        }
     }
+    writeln!(&mut output, "Entities:")?;
+    for entity in entities {
+        // The first should be ENTVARS which should have a class name
+        let class_name = read_str_field(&entity[0].1, "classname")?;
+        writeln!(&mut output, "  {}", class_name)?;
+        record_fields(&entity[0].1, "    ", &mut output)?;
+    }
+
 
     let offset = hl1_block_reader.position();
     writeln!(&mut output, "Current HL1 Block Offset (Relative): {} (0x{:X})", offset, offset)?;
@@ -605,4 +615,64 @@ fn read_str_field<'a>(save_struct: &'a [(&str, Vec<u8>)], field_name: &str) -> R
     let field_str_end = find_next_null(&field_bytes, 0).unwrap_or(field_bytes.len());
     let field_str = str::from_utf8(&field_bytes[0..field_str_end])?;
     Ok(field_str)
+}
+
+fn read_str<'a>(bytes: &'a [u8]) -> Result<&'a str, Box<dyn std::error::Error>> {
+    let field_str_end = find_next_null(&bytes, 0).unwrap_or(bytes.len());
+    let field_str = str::from_utf8(&bytes[0..field_str_end])?;
+    Ok(field_str)
+}
+
+fn read_u32<'a>(bytes: &'a [u8]) -> Result<u32, Box<dyn std::error::Error>> {
+    let mut value_bytes = [0u8; 4];
+    value_bytes.copy_from_slice(bytes);
+    let value = u32::from_le_bytes(value_bytes);
+    Ok(value)
+}
+
+fn read_f32<'a>(bytes: &'a [u8]) -> Result<f32, Box<dyn std::error::Error>> {
+    let mut value_bytes = [0u8; 4];
+    value_bytes.copy_from_slice(bytes);
+    let value = f32::from_le_bytes(value_bytes);
+    Ok(value)
+}
+
+fn record_fields<'a>(fields: &'a [(&str, Vec<u8>)], prefix: &str, output: &mut String) -> Result<(), Box<dyn std::error::Error>> {
+    for (field_name, field_data) in fields {
+        write!(output, "{}{}: ", prefix, field_name)?;
+        match *field_name {
+            "classname" | "model" | "message" | "netname" => record_str_field(field_data, output)?,
+            "modelindex" => record_u32_field(field_data, output)?,
+            "absmin" | "absmax" | "origin" | "angles" | "v_angle" | "mins" | "maxs" | "viewofs" | "size" => record_vec3_field(field_data, output)?,
+            _ => write!(output, "{:02X?}", field_data)?,
+        }
+        writeln!(output)?;
+    }
+    Ok(())
+}
+
+fn record_str_field<'a>(field_data: &'a [u8], output: &mut String) -> Result<(), Box<dyn std::error::Error>> {
+    let field_str = read_str(field_data)?;
+    write!(output, "\"{}\"", field_str)?;
+    Ok(())
+}
+
+fn record_u32_field<'a>(field_data: &'a [u8], output: &mut String) -> Result<(), Box<dyn std::error::Error>> {
+    let value = read_u32(field_data)?;
+    write!(output, "{} (0x{:X})", value, value)?;
+    Ok(())
+}
+
+fn record_f32_field<'a>(field_data: &'a [u8], output: &mut String) -> Result<(), Box<dyn std::error::Error>> {
+    let value = read_f32(field_data)?;
+    write!(output, "{:.2}", value)?;
+    Ok(())
+}
+
+fn record_vec3_field<'a>(field_data: &'a [u8], output: &mut String) -> Result<(), Box<dyn std::error::Error>> {
+    let x = read_f32(&field_data[..4])?;
+    let y = read_f32(&field_data[4..8])?;
+    let z = read_f32(&field_data[8..12])?;
+    write!(output, "{:.2}, {:.2}, {:.2}", x, y, z)?;
+    Ok(())
 }
