@@ -313,7 +313,8 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         let class_name = read_str_field(&entity[0].1, "classname")?;
         writeln!(&mut output, "  {}", class_name)?;
         for fragment in &entity {
-            record_fields(&fragment.1, "    ", &mut output)?;
+        writeln!(&mut output, "    {}", fragment.0)?;
+            record_fields(&fragment.1, "      ", &mut output)?;
         }
     }
 
@@ -643,9 +644,9 @@ fn record_fields<'a>(fields: &'a [(&str, Vec<u8>)], prefix: &str, output: &mut S
     for (field_name, field_data) in fields {
         write!(output, "{}{}: ", prefix, field_name)?;
         match *field_name {
-            "classname" | "model" | "message" | "netname" => record_str_field(field_data, output)?,
+            "classname" | "model" | "message" | "netname" | "targetname" => record_str_field(field_data, output)?,
             "modelindex" | "spawnflags" | "flags" => record_u32_field(field_data, output)?,
-            "absmin" | "absmax" | "origin" | "angles" | "v_angle" | "mins" | "maxs" | "view_ofs" | "size" | "m_HackedGunPos" => record_vec3_field(field_data, output)?,
+            "absmin" | "absmax" | "origin" | "angles" | "v_angle" | "mins" | "maxs" | "view_ofs" | "size" | "m_HackedGunPos" | "movedir" | "m_vecPosition2" => record_vec3_field(field_data, output)?,
             _ => write!(output, "(len: {}) {:02X?}", field_data.len(), field_data)?,
         }
         writeln!(output)?;
