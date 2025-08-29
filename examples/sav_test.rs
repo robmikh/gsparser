@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
     fmt::Write,
     io::Read,
     path::{Path, PathBuf},
@@ -9,7 +8,7 @@ use std::{
 use gsparser::{
     bsp::{BspEntity, BspReader},
     mdl::null_terminated_bytes_to_str,
-    sav::BytesReader,
+    sav::{BytesReader, SavHeader, StringTable, find_next_non_null, find_next_null},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -138,28 +137,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn find_next_null(bytes: &[u8], start: usize) -> Option<usize> {
-    let mut end = start;
-    while end < bytes.len() {
-        if bytes[end] == 0 {
-            return Some(end);
-        }
-        end += 1;
-    }
-    None
-}
-
-fn find_next_non_null(bytes: &[u8], start: usize) -> Option<usize> {
-    let mut end = start;
-    while end < bytes.len() {
-        if bytes[end] != 0 {
-            return Some(end);
-        }
-        end += 1;
-    }
-    None
-}
-
 struct SavData {
     map_name: String,
     num_entries: usize,
@@ -189,51 +166,24 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
 
     let reader = BytesReader::new(&bytes);
     // Header
-    let magic = reader.read(4)?;
-    assert_eq!(&magic, b"JSAV");
-    let version = reader.read_u32_le()?;
-    assert_eq!(version, 0x71);
-    let door_info_len = reader.read_u32_le()?;
-    let token_count = reader.read_u32_le()?;
-    let tokens_size = reader.read_u32_le()?;
-    writeln!(&mut output, "Header:")?;
-    writeln!(&mut output, "  magic: {:X?}", magic)?;
-    writeln!(&mut output, "  version: 0x{:X}", version)?;
-    writeln!(
-        &mut output,
-        "  door_info_len: {} (0x{:X})",
-        door_info_len, door_info_len
-    )?;
-    writeln!(
-        &mut output,
-        "  token_count: {} (0x{:X})",
-        token_count, token_count
-    )?;
-    writeln!(
-        &mut output,
-        "  tokens_size: {} (0x{:X})",
-        tokens_size, tokens_size
-    )?;
-    writeln!(&mut output, "")?;
+    let sav_header = SavHeader::parse(&reader)?;
+    sav_header.record("", &mut output)?;
 
-    // Read tokens data
-    let string_table_bytes = reader.read(tokens_size as usize)?;
-    let tokens = StringTable::parse(string_table_bytes)?;
-    tokens.record(&mut output)?;
+    // Root string table
+    let tokens = StringTable::parse(&reader)?;
+    tokens.record("", &mut output)?;
+    writeln!(&mut output)?;
+
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
 
     // Read "door info"
     let door_info_start = offset;
-    let door_info_bytes = reader.read(door_info_len as usize)?;
-    let _ = process_door_infos(&door_info_bytes, 0x94, &mut output)?;
-    let mut door_info_reader = std::io::Cursor::new(&door_info_bytes);
-    let (_, game_header_struct) = read_struct(
-        &mut door_info_reader,
-        Some("GameHeader"),
-        &tokens,
-        &mut output,
-    )?;
+    let door_info_bytes = reader.read(sav_header.global_entities_len as usize)?;
+    let door_info_reader = BytesReader::new(door_info_bytes);
+    let (_, game_header_struct) =
+        read_struct(&door_info_reader, Some("GameHeader"), &tokens, &mut output)?;
+    let map_name = read_str_field(&game_header_struct, "mapName")?;
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
     let offset = door_info_reader.position() as usize;
@@ -249,8 +199,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         door_info_start + offset
     )?;
 
-    let (_, global_struct) =
-        read_struct(&mut door_info_reader, Some("GLOBAL"), &tokens, &mut output)?;
+    let (_, global_struct) = read_struct(&door_info_reader, Some("GLOBAL"), &tokens, &mut output)?;
     let offset = door_info_reader.position() as usize;
     writeln!(
         &mut output,
@@ -268,13 +217,12 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     let list_count = read_u32_field(&global_struct, "m_listCount").unwrap();
     let mut door_infos = Vec::with_capacity(list_count as usize);
     for _ in 0..list_count {
-        let (_, gent_struct) =
-            read_struct(&mut door_info_reader, Some("GENT"), &tokens, &mut output)?;
+        let (_, gent_struct) = read_struct(&door_info_reader, Some("GENT"), &tokens, &mut output)?;
 
         let name = read_str_field(&gent_struct, "name")?;
         let level_name = read_str_field(&gent_struct, "levelName")?;
 
-        let state_bytes = get_field(&gent_struct, "state").map(|bytes| bytes.clone());
+        let state_bytes = get_field(&gent_struct, "state");
 
         door_infos.push((name.to_owned(), level_name.to_owned(), state_bytes.clone()));
     }
@@ -330,43 +278,25 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
 
     // Poke at the first HL1 block
     let mut hl1_block_reader = std::io::Cursor::new(&hl1_block);
-    let magic = {
-        let mut magic = [0u8; 4];
-        hl1_block_reader.read_exact(&mut magic)?;
-        magic
-    };
+    let hl1_block_reader = BytesReader::new(hl1_block);
+    let magic = hl1_block_reader.read(4)?;
     assert_eq!(&magic, b"VALV");
-    let version = read_u32_le(&mut hl1_block_reader)?;
+    let version = hl1_block_reader.read_u32_le()?;
     assert_eq!(version, 0x71);
-    let unknown_1 = read_u32_le(&mut hl1_block_reader)?;
+    let unknown_1 = hl1_block_reader.read_u32_le()?;
     writeln!(
         &mut output,
         "  unknown_1: {} (0x{:X})",
         unknown_1, unknown_1
     )?;
-    let expected_num_etables = read_u32_le(&mut hl1_block_reader)?;
+    let expected_num_etables = hl1_block_reader.read_u32_le()?;
     writeln!(
         &mut output,
         "  expected_num_etables: {} (0x{:X})",
         expected_num_etables, expected_num_etables
     )?;
-    let token_count = read_u32_le(&mut hl1_block_reader)?;
-    writeln!(
-        &mut output,
-        "  token_count: {} (0x{:X})",
-        token_count, token_count
-    )?;
-    let token_table_len = read_u32_le(&mut hl1_block_reader)?;
-    writeln!(
-        &mut output,
-        "  token_table_len: {} (0x{:X})",
-        token_table_len, token_table_len
-    )?;
-    let tokens_data_start = hl1_block_reader.position() as usize;
-    let tokens_data_end = tokens_data_start + token_table_len as usize;
-    hl1_block_reader.set_position(tokens_data_end as u64);
-    let tokens = StringTable::parse(&hl1_block[tokens_data_start..tokens_data_end])?;
-    tokens.record(&mut output)?;
+    let tokens = StringTable::parse(&hl1_block_reader)?;
+    tokens.record("", &mut output)?;
 
     let offset = hl1_block_reader.position() as usize;
     writeln!(
@@ -383,8 +313,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
 
     let mut num_etables = 0;
     for _ in 0..expected_num_etables {
-        let etable_struct =
-            read_struct(&mut hl1_block_reader, Some("ETABLE"), &tokens, &mut output)?;
+        let etable_struct = read_struct(&hl1_block_reader, Some("ETABLE"), &tokens, &mut output)?;
         num_etables += 1;
     }
     writeln!(
@@ -394,44 +323,31 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     )?;
     assert_eq!(num_etables, expected_num_etables);
 
-    let (_, save_header) = read_struct(
-        &mut hl1_block_reader,
-        Some("Save Header"),
-        &tokens,
-        &mut output,
-    )?;
+    let (_, save_header) =
+        read_struct(&hl1_block_reader, Some("Save Header"), &tokens, &mut output)?;
     let connection_count = read_u32_field(&save_header, "connectionCount").unwrap();
     for _ in 0..connection_count {
-        let (_, adjacency_data) = read_struct(
-            &mut hl1_block_reader,
-            Some("ADJACENCY"),
-            &tokens,
-            &mut output,
-        )?;
+        let (_, adjacency_data) =
+            read_struct(&hl1_block_reader, Some("ADJACENCY"), &tokens, &mut output)?;
     }
 
     // Read "LIGHTSTYLE" structs
     let light_style_count = read_u32_field(&save_header, "lightStyleCount").unwrap();
     for _ in 0..light_style_count {
-        let (_, light_style) = read_struct(
-            &mut hl1_block_reader,
-            Some("LIGHTSTYLE"),
-            &tokens,
-            &mut output,
-        )?;
+        let (_, light_style) =
+            read_struct(&hl1_block_reader, Some("LIGHTSTYLE"), &tokens, &mut output)?;
     }
 
     // Read "ENTVARS" structs
     let entity_count = read_u32_field(&save_header, "entityCount").unwrap();
     //println!("entity_count: {}", entity_count);
     //println!("num_etables: {}", num_etables);
-    let mut current_entity: Option<Vec<(&str, Vec<(&str, Vec<u8>)>)>> = None;
+    let mut current_entity: Option<Vec<(&str, Vec<(&str, &[u8])>)>> = None;
     let mut entities = Vec::with_capacity(entity_count as usize);
     while entities.len() < entity_count as usize {
         //let offset = hl1_block_reader.position() + hl1_block_start;
         //println!("  offset: 0x{:X}", offset);
-        let (ty, entity_vars) = match read_struct(&mut hl1_block_reader, None, &tokens, &mut output)
-        {
+        let (ty, entity_vars) = match read_struct(&hl1_block_reader, None, &tokens, &mut output) {
             Ok(result) => result,
             Err(error) => {
                 writeln!(&mut output, "ERROR: {}", error)?;
@@ -569,55 +485,8 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     // Doesn't work with all my saves...
     //assert!(offsets_and_ends.len() % num_world_spawn == 0, "Number of pairs {} are not divisible by {}", offsets_and_ends.len(), num_world_spawn);
 
-    // Find map name
-    let map_name_start = 0x106E;
-    let map_name_end = find_next_null(&bytes, map_name_start).unwrap();
-    let map_name_bytes = &bytes[map_name_start..map_name_end];
-    let map_name = std::str::from_utf8(map_name_bytes)?;
-    writeln!(&mut output, "Map name: {}", map_name)?;
-
     let num_entries = entries.len();
     let num_world_spawns = world_spawn_indices.len();
-
-    // Read door infos (?)
-    let door_info_count_offset = 0x10EE;
-    let door_info_offset = process_door_infos(&bytes, door_info_count_offset, &mut output)?;
-
-    // The next chunk of data contains the map name, the substrings "HL1" and
-    // "sav", and something that ends in "VALVq".
-    let valvq_block_len = 272;
-    let valvq_block_start = door_info_offset;
-    let valvq_block_bytes = &bytes[valvq_block_start..valvq_block_start + valvq_block_len];
-    assert_eq!(valvq_block_len, valvq_block_bytes.len());
-    assert_eq!(valvq_block_bytes[0], 0);
-    assert_eq!(valvq_block_bytes[1], 0);
-    let suffix = &valvq_block_bytes[valvq_block_len - 5..];
-    assert_eq!(suffix, b"VALVq");
-
-    // Next are a bunch of string inconsistently padded with 0s before we hit
-    // the first entity class name ("worldspawn")
-    let strings_offset = valvq_block_start + valvq_block_len + 1 + 16;
-    let mut current_strings_offset = strings_offset;
-    let mut num_strings = 0;
-    let first_worldspawn = first_offset_and_class_name
-        .map(|(offset, _)| offset)
-        .unwrap();
-    writeln!(&mut output, "Strings:")?;
-    while current_strings_offset < first_worldspawn {
-        current_strings_offset = find_next_non_null(&bytes, current_strings_offset).unwrap();
-        let string_end = find_next_null(&bytes, current_strings_offset).unwrap();
-        let string_bytes = &bytes[current_strings_offset..string_end];
-        //println!("{:X}  {:02X?}", current_strings_offset, string_bytes);
-        let string = std::str::from_utf8(string_bytes)?;
-        writeln!(&mut output, "  {}", string)?;
-        current_strings_offset = string_end + 1;
-        num_strings += 1;
-
-        if string == "noise1" {
-            break;
-        }
-    }
-    writeln!(&mut output, "Found {} strings(s)", num_strings)?;
 
     let entities = {
         let mut new_entities = Vec::with_capacity(entities.len());
@@ -629,7 +498,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
             for (fragment_name, fields) in fragments {
                 let mut new_fields = Vec::with_capacity(fields.len());
                 for (field_name, field_data) in fields {
-                    new_fields.push((field_name.to_owned(), field_data));
+                    new_fields.push((field_name.to_owned(), field_data.to_vec()));
                 }
                 new_fragments.push((fragment_name.to_owned(), new_fields));
             }
@@ -664,68 +533,15 @@ fn resolve_map_entity_string<'a>(reader: &'a BspReader) -> Cow<'a, str> {
     }
 }
 
-fn process_door_infos(
-    bytes: &[u8],
-    start: usize,
-    output: &mut String,
-) -> Result<usize, Box<dyn std::error::Error>> {
-    let num_door_infos = bytes[start] as usize;
-    let mut door_info_offset = start + 1;
-    let mut saw_non_default_size_clue = false;
-    writeln!(output, "Door infos:")?;
-    for _ in 0..num_door_infos {
-        // Check the first 15 bytes
-        let prefix = &bytes[door_info_offset..door_info_offset + 15];
-        let expected = [
-            0x00, 0x00, 0x00, 0x04, 0x00, 0xF1, 0x07, 0x03, 0x00, 0x00, 0x00, 0x40, 0x00, 0x1A,
-            0x0F,
-        ];
-        // The first 7 seem to be constant
-        assert_eq!(&prefix[..7], &expected[..7]);
-        // The rest of the bytes after the size clude also seem to be constant
-        assert_eq!(&prefix[8..], &expected[8..]);
-        let size_clue = prefix[7];
-        if size_clue != 0x3 {
-            saw_non_default_size_clue = true;
-        }
-        let size = match size_clue {
-            0x3 => 120,
-            0x2 => 112,
-            _ => panic!("Unknown size clue \"{:02X}\"!", size_clue),
-        };
-
-        let data = &bytes[door_info_offset..door_info_offset + size];
-        door_info_offset += size;
-
-        let target_name_start = 15;
-        let target_name_end = find_next_null(data, target_name_start).unwrap();
-        let target_name_bytes = &data[target_name_start..target_name_end];
-        let target_name = std::str::from_utf8(target_name_bytes)?;
-        assert!(!target_name.is_empty());
-
-        let entity_map_name_start = 83;
-        let entity_map_name_end = find_next_null(data, entity_map_name_start).unwrap();
-        let entity_map_name_bytes = &data[entity_map_name_start..entity_map_name_end];
-        let entity_map_name = std::str::from_utf8(entity_map_name_bytes)?;
-        assert!(!entity_map_name.is_empty());
-
-        writeln!(output, "  {}  ({})", target_name, entity_map_name)?;
-    }
-    if saw_non_default_size_clue {
-        writeln!(output, "Saw non-default size clue!")?;
-    }
-    Ok(door_info_offset)
-}
-
-fn read_struct<'a, R: Read>(
-    mut reader: R,
+fn read_struct<'a, 'b>(
+    reader: &'b BytesReader<'b>,
     expected_name: Option<&str>,
     string_table: &'a StringTable<'a>,
     output: &mut String,
-) -> Result<(&'a str, Vec<(&'a str, Vec<u8>)>), Box<dyn std::error::Error>> {
-    let always_4 = read_u16_le(&mut reader)?;
+) -> Result<(&'a str, Vec<(&'a str, &'b [u8])>), Box<dyn std::error::Error>> {
+    let always_4 = reader.read_u16_le()?;
     assert_eq!(always_4, 4);
-    let token_offset = read_u16_le(&mut reader)?;
+    let token_offset = reader.read_u16_le()?;
     let token = string_table.get(token_offset as u32).unwrap();
     //assert_eq!(token, expected_name);
     if let Some(expected_name) = expected_name {
@@ -737,21 +553,20 @@ fn read_struct<'a, R: Read>(
         }
     }
     writeln!(output, "\"{}\":", token)?;
-    let fields_saved = read_u16_le(&mut reader)?;
+    let fields_saved = reader.read_u16_le()?;
     writeln!(output, "  Fields: {} (0x{:X})", fields_saved, fields_saved)?;
     // Not what this short is for
-    let unknown = read_u16_le(&mut reader)?;
+    let unknown = reader.read_u16_le()?;
     assert_eq!(unknown, 0);
 
     // Read each field
     let mut fields = Vec::with_capacity(fields_saved as usize);
     for _ in 0..fields_saved {
-        let payload_size = read_u16_le(&mut reader)?;
-        let token_offset = read_u16_le(&mut reader)?;
+        let payload_size = reader.read_u16_le()?;
+        let token_offset = reader.read_u16_le()?;
         let token = string_table.get(token_offset as u32).unwrap();
 
-        let mut payload = vec![0u8; payload_size as usize];
-        reader.read_exact(&mut payload)?;
+        let payload = reader.read(payload_size as usize)?;
         fields.push((token, payload));
     }
     for (field_name, payload) in &fields {
@@ -776,7 +591,7 @@ fn read_hl_block<'a>(
     Ok((hl1_name, hl1_header, hl1_block))
 }
 
-fn get_field<'a>(save_struct: &'a [(&str, Vec<u8>)], field_name: &str) -> Option<&'a Vec<u8>> {
+fn get_field<'a, 'b>(save_struct: &'a [(&str, &'b [u8])], field_name: &str) -> Option<&'b [u8]> {
     let bytes = save_struct
         .iter()
         .find(|(name, _)| *name == field_name)
@@ -784,7 +599,7 @@ fn get_field<'a>(save_struct: &'a [(&str, Vec<u8>)], field_name: &str) -> Option
     Some(bytes)
 }
 
-fn read_u32_field(save_struct: &[(&str, Vec<u8>)], field_name: &str) -> Option<u32> {
+fn read_u32_field(save_struct: &[(&str, &[u8])], field_name: &str) -> Option<u32> {
     let field_bytes_source = get_field(save_struct, field_name)?;
     let mut field_bytes = [0u8; 4];
     field_bytes.copy_from_slice(field_bytes_source);
@@ -793,7 +608,7 @@ fn read_u32_field(save_struct: &[(&str, Vec<u8>)], field_name: &str) -> Option<u
 }
 
 fn read_str_field<'a>(
-    save_struct: &'a [(&str, Vec<u8>)],
+    save_struct: &'a [(&str, &[u8])],
     field_name: &str,
 ) -> Result<&'a str, Box<dyn std::error::Error>> {
     let field_bytes = get_field(save_struct, field_name).unwrap();
@@ -823,7 +638,7 @@ fn read_f32<'a>(bytes: &'a [u8]) -> Result<f32, Box<dyn std::error::Error>> {
 }
 
 fn record_fields<'a>(
-    fields: &'a [(&str, Vec<u8>)],
+    fields: &'a [(&str, &[u8])],
     prefix: &str,
     output: &mut String,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -884,50 +699,6 @@ fn record_vec3_field<'a>(
     Ok(())
 }
 
-struct StringTable<'a> {
-    table: HashMap<u32, &'a str>,
-}
-
-impl<'a> StringTable<'a> {
-    fn parse(bytes: &'a [u8]) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut table = HashMap::new();
-        let mut current = 0;
-        let mut num = 0;
-        while current < bytes.len() {
-            if bytes[current] != 0 {
-                let start = current;
-                let end = find_next_null(&bytes, start).unwrap();
-                let string = str::from_utf8(&bytes[start..end])?;
-                let previous = table.insert(num, string);
-                assert!(previous.is_none());
-                current = end;
-            }
-            current += 1;
-            num += 1;
-        }
-        Ok(Self { table })
-    }
-
-    fn get(&'a self, offset: u32) -> Option<&'a str> {
-        self.table.get(&offset).map(|x| *x)
-    }
-
-    fn len(&self) -> usize {
-        self.table.len()
-    }
-
-    fn record(&self, output: &mut String) -> std::fmt::Result {
-        writeln!(output, "String Table ({}):", self.len())?;
-        let mut keys: Vec<u32> = self.table.keys().map(|x| *x).collect();
-        keys.sort();
-        for key in keys {
-            let value = self.get(key).unwrap();
-            writeln!(output, "  ({:4})  \"{}\"", key, value)?;
-        }
-        Ok(())
-    }
-}
-
 trait SavFieldValue: Sized {
     fn parse(bytes: &[u8]) -> Result<Self, Box<dyn std::error::Error>>;
 }
@@ -960,3 +731,33 @@ macro_rules! sav_struct{
 }
 
 struct SaveHeader {}
+
+trait SavTestRecord {
+    fn record(&self, prefix: &str, output: &mut String) -> std::fmt::Result;
+}
+
+impl SavTestRecord for SavHeader {
+    fn record(&self, prefix: &str, output: &mut String) -> std::fmt::Result {
+        writeln!(output, "{}Header:", prefix)?;
+        writeln!(output, "{}  magic: {:X?}", prefix, self.magic)?;
+        writeln!(output, "{}  version: 0x{:X}", prefix, self.version)?;
+        writeln!(
+            output,
+            "{}  global_entities_len: {} (0x{:X})",
+            prefix, self.global_entities_len, self.global_entities_len
+        )?;
+        Ok(())
+    }
+}
+
+impl<'a> SavTestRecord for StringTable<'a> {
+    fn record(&self, prefix: &str, output: &mut String) -> std::fmt::Result {
+        writeln!(output, "{}String Table ({}):", prefix, self.len())?;
+        let keys = self.get_sorted_keys();
+        for key in keys {
+            let value = self.get(key).unwrap();
+            writeln!(output, "{}  ({:4})  \"{}\"", prefix, key, value)?;
+        }
+        Ok(())
+    }
+}
