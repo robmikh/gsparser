@@ -20,7 +20,29 @@ impl<'a> BytesReader<'a> {
         self.current.load(Ordering::Relaxed)
     }
 
-    pub fn read(&self, len: usize) -> std::io::Result<&[u8]> {
+    pub fn read_until_null(&self) -> std::io::Result<&'a [u8]> {
+        let start = self.position();
+        let mut current = start;
+        let mut end = None;
+        while current < self.bytes.len() {
+            if self.bytes[current] == 0 {
+                end = Some(current);
+                break;
+            }
+            current += 1;
+        }
+        if let Some(end) = end {
+            let bytes = self.read(end - start)?;
+            Ok(bytes)
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Never found null byte!",
+            ))
+        }
+    }
+
+    pub fn read(&self, len: usize) -> std::io::Result<&'a [u8]> {
         let start = self.position();
         let end = start + len;
         if end > self.bytes.len() {
@@ -139,4 +161,106 @@ pub fn find_next_non_null(bytes: &[u8], start: usize) -> Option<usize> {
         end += 1;
     }
     None
+}
+
+
+trait IntoIo<T> {
+    fn into_io(self) -> std::io::Result<T>;
+}
+
+impl<T> IntoIo<T> for Result<T, std::str::Utf8Error> {
+    fn into_io(self) -> std::io::Result<T> {
+        match self {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("{}", error),
+                ))
+            }
+        }
+    }
+}
+
+trait SavFieldValue<'a>: Sized {
+    fn parse(reader: &BytesReader<'a>) -> std::io::Result<Self>;
+}
+
+impl<'a> SavFieldValue<'a> for &'a str {
+    fn parse(reader: &BytesReader<'a>) -> std::io::Result<Self> {
+        let bytes = reader.read_until_null()?;
+        let result = str::from_utf8(bytes).into_io()?;
+        Ok(result)
+    }
+}
+
+impl<'a> SavFieldValue<'a> for u32 {
+    fn parse(reader: &BytesReader<'a>) -> std::io::Result<Self> {
+        reader.read_u32_le()
+    }
+}
+
+macro_rules! sav_struct{
+    ($struct_name:ident ($struct_tag:literal) {
+        $(
+            $field_name:ident ($field_sav_name:literal) : $field_ty:ty
+        ),*
+    }) => {
+        pub struct $struct_name<'a> {
+            $(
+                pub $field_name : Option<$field_ty>,
+            )*
+        }
+
+        impl<'a> $struct_name<'a> {
+            pub fn parse(reader: &'a BytesReader<'a>, string_table: &StringTable) -> std::io::Result<Self> {
+                let always_4 = reader.read_u16_le()?;
+                assert_eq!(always_4, 4);
+
+                let token_offset = reader.read_u16_le()?;
+                let token = string_table.get(token_offset as u32).unwrap();
+                assert_eq!(token, $struct_tag);
+
+                let fields_saved = reader.read_u16_le()?;
+                // Not what this short is for
+                let unknown = reader.read_u16_le()?;
+                assert_eq!(unknown, 0);
+
+                // Read each field
+                $(
+                    let mut $field_name: Option<$field_ty> = None;
+                )*
+                for _ in 0..fields_saved {
+                    let payload_size = reader.read_u16_le()?;
+                    let token_offset = reader.read_u16_le()?;
+                    let field_token = string_table.get(token_offset as u32).unwrap();
+                    let payload = reader.read(payload_size as usize)?;
+                    let payload_reader = BytesReader::new(payload);
+
+                    match field_token {
+                        $(
+                            $field_sav_name => {
+                                $field_name = Some(<$field_ty>::parse(&payload_reader)?);
+                            }
+                        )*
+                        _ => return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Property \"{}\" not recognized for struct \"{}\"!", field_token, token)))
+                    }
+                }
+
+                Ok(Self {
+                    $(
+                        $field_name,
+                    )*
+                })
+            }
+        }
+    };
+}
+
+sav_struct!{
+    GameHeader ("GameHeader") {
+        map_count ("mapCount"): u32,
+        map_name ("mapName"): &'a str,
+        comment ("comment"): &'a str
+    }
 }

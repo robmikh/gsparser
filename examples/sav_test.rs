@@ -1,14 +1,13 @@
 use std::{
     borrow::Cow,
     fmt::Write,
-    io::Read,
     path::{Path, PathBuf},
 };
 
 use gsparser::{
     bsp::{BspEntity, BspReader},
     mdl::null_terminated_bytes_to_str,
-    sav::{BytesReader, SavHeader, StringTable, find_next_non_null, find_next_null},
+    sav::{find_next_null, BytesReader, GameHeader, SavHeader, StringTable},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -147,18 +146,6 @@ struct SavData {
     entities: Vec<(String, Vec<(String, Vec<(String, Vec<u8>)>)>)>,
 }
 
-fn read_u32_le<R: Read>(mut reader: R) -> std::io::Result<u32> {
-    let mut value = [0u8; 4];
-    reader.read_exact(&mut value)?;
-    Ok(u32::from_le_bytes(value))
-}
-
-fn read_u16_le<R: Read>(mut reader: R) -> std::io::Result<u16> {
-    let mut value = [0u8; 2];
-    reader.read_exact(&mut value)?;
-    Ok(u16::from_le_bytes(value))
-}
-
 fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::error::Error>> {
     let bytes = std::fs::read(sav_path)?;
 
@@ -177,47 +164,22 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
 
-    // Read "door info"
-    let door_info_start = offset;
-    let door_info_bytes = reader.read(sav_header.global_entities_len as usize)?;
-    let door_info_reader = BytesReader::new(door_info_bytes);
-    let (_, game_header_struct) =
-        read_struct(&door_info_reader, Some("GameHeader"), &tokens, &mut output)?;
-    let map_name = read_str_field(&game_header_struct, "mapName")?;
+    // Read game header
+    let game_header = GameHeader::parse(&reader, &tokens)?;
+    game_header.record("", &mut output)?;
+    let map_name = game_header.map_name.unwrap();
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
-    let offset = door_info_reader.position() as usize;
-    writeln!(
-        &mut output,
-        "Current Door Info Offset (Relative): {} (0x{:X})",
-        offset, offset
-    )?;
-    writeln!(
-        &mut output,
-        "Current Door Info Offset: {} (0x{:X})",
-        door_info_start + offset,
-        door_info_start + offset
-    )?;
 
-    let (_, global_struct) = read_struct(&door_info_reader, Some("GLOBAL"), &tokens, &mut output)?;
-    let offset = door_info_reader.position() as usize;
-    writeln!(
-        &mut output,
-        "Current Door Info Offset (Relative): {} (0x{:X})",
-        offset, offset
-    )?;
-    writeln!(
-        &mut output,
-        "Current Door Info Offset: {} (0x{:X})",
-        door_info_start + offset,
-        door_info_start + offset
-    )?;
+    let (_, global_struct) = read_struct(&reader, Some("GLOBAL"), &tokens, &mut output)?;
+    let offset = reader.position();
+    writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
 
     // We should have a 'm_listCount' with the number of door infos
     let list_count = read_u32_field(&global_struct, "m_listCount").unwrap();
     let mut door_infos = Vec::with_capacity(list_count as usize);
     for _ in 0..list_count {
-        let (_, gent_struct) = read_struct(&door_info_reader, Some("GENT"), &tokens, &mut output)?;
+        let (_, gent_struct) = read_struct(&reader, Some("GENT"), &tokens, &mut output)?;
 
         let name = read_str_field(&gent_struct, "name")?;
         let level_name = read_str_field(&gent_struct, "levelName")?;
@@ -235,19 +197,8 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         )?;
     }
 
-    //let num_state_files = read_u16_le(&mut reader)?;
-    let offset = door_info_reader.position() as usize;
-    writeln!(
-        &mut output,
-        "Current Door Info Offset (Relative): {} (0x{:X})",
-        offset, offset
-    )?;
-    writeln!(
-        &mut output,
-        "Current Door Info Offset: {} (0x{:X})",
-        door_info_start + offset,
-        door_info_start + offset
-    )?;
+    let offset = reader.position();
+    writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
 
     let hl1_header_start = reader.position();
     let (hl1_name, hl1_header, hl1_block) = read_hl_block(&reader)?;
@@ -699,38 +650,6 @@ fn record_vec3_field<'a>(
     Ok(())
 }
 
-trait SavFieldValue: Sized {
-    fn parse(bytes: &[u8]) -> Result<Self, Box<dyn std::error::Error>>;
-}
-
-impl SavFieldValue for String {
-    fn parse(bytes: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
-        let str = read_str(bytes)?;
-        Ok(str.to_owned())
-    }
-}
-
-macro_rules! sav_struct{
-    ($struct_name:ident ($struct_tag:literal) {
-        $(
-            $field_name:ident ($field_sav_name:literal) : $field_ty:ty
-        ),*
-    }) => {
-        struct $struct_name {
-            $(
-                $field_name : Option<$field_y>,
-            )*
-        }
-
-        impl $struct_name {
-            pub fn parse() -> Self {
-
-            }
-        }
-    };
-}
-
-struct SaveHeader {}
 
 trait SavTestRecord {
     fn record(&self, prefix: &str, output: &mut String) -> std::fmt::Result;
@@ -757,6 +676,22 @@ impl<'a> SavTestRecord for StringTable<'a> {
         for key in keys {
             let value = self.get(key).unwrap();
             writeln!(output, "{}  ({:4})  \"{}\"", prefix, key, value)?;
+        }
+        Ok(())
+    }
+}
+
+impl<'a> SavTestRecord for GameHeader<'a> {
+    fn record(&self, prefix: &str, output: &mut String) -> std::fmt::Result {
+        writeln!(output, "{}Game Header:", prefix)?;
+        if let Some(map_count) = self.map_count {
+            writeln!(output, "{}  map_count: {} (0x{:X})", prefix, map_count, map_count)?;
+        }
+        if let Some(map_name) = self.map_name {
+            writeln!(output, "{}  map_name: \"{}\"", prefix, map_name)?;
+        }
+        if let Some(comment) = self.comment {
+            writeln!(output, "{}  comment: \"{}\"", prefix, comment)?;
         }
         Ok(())
     }
