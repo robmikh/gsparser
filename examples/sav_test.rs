@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    collections::HashMap,
     fmt::Write,
     io::Read,
     path::{Path, PathBuf},
@@ -8,6 +9,7 @@ use std::{
 use gsparser::{
     bsp::{BspEntity, BspReader},
     mdl::null_terminated_bytes_to_str,
+    sav::BytesReader,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -81,6 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
 
+        /*
         let mut map_entities_iter = entities.iter();
         let mut sav_entities_iter = data.entities.iter();
         while let Some((sav_entity, _)) = sav_entities_iter.next() {
@@ -104,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut found_match = false;
             while let Some(map_entity) = map_entities_iter.next() {
                 let map_entity_class_name = map_entity.0["classname"];
-                // Skip-able 
+                // Skip-able
                 if should_skip(&map_entity_class_name) {
                     continue;
                 }
@@ -119,6 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 panic!("Match not found!");
             }
         }
+        */
 
         let sav_output_path = {
             let mut path = output_path.clone();
@@ -183,19 +187,15 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
 
     let mut output = String::new();
 
-    let mut reader = std::io::Cursor::new(&bytes);
+    let reader = BytesReader::new(&bytes);
     // Header
-    let magic = {
-        let mut magic = [0u8; 4];
-        reader.read_exact(&mut magic)?;
-        magic
-    };
+    let magic = reader.read(4)?;
     assert_eq!(&magic, b"JSAV");
-    let version = read_u32_le(&mut reader)?;
+    let version = reader.read_u32_le()?;
     assert_eq!(version, 0x71);
-    let door_info_len = read_u32_le(&mut reader)?;
-    let token_count = read_u32_le(&mut reader)?;
-    let tokens_size = read_u32_le(&mut reader)?;
+    let door_info_len = reader.read_u32_le()?;
+    let token_count = reader.read_u32_le()?;
+    let tokens_size = reader.read_u32_le()?;
     writeln!(&mut output, "Header:")?;
     writeln!(&mut output, "  magic: {:X?}", magic)?;
     writeln!(&mut output, "  version: 0x{:X}", version)?;
@@ -217,28 +217,15 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     writeln!(&mut output, "")?;
 
     // Read tokens data
-    let (num, tokens) = read_token_table(&mut reader, tokens_size as usize)?;
-    writeln!(&mut output, "Tokens ({}):", tokens.len())?;
-    for (offset, token) in &tokens {
-        writeln!(&mut output, "  ({:4})  \"{}\"", offset, token)?;
-    }
-    let num_message = if num == token_count {
-        "matches token_count!"
-    } else {
-        "NO MATCH"
-    };
-    writeln!(&mut output, "Num: {} ({})", num, num_message)?;
+    let string_table_bytes = reader.read(tokens_size as usize)?;
+    let tokens = StringTable::parse(string_table_bytes)?;
+    tokens.record(&mut output)?;
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
-    assert_eq!(num, token_count);
 
     // Read "door info"
     let door_info_start = offset;
-    let door_info_bytes = {
-        let mut door_info_bytes = vec![0u8; door_info_len as usize];
-        reader.read_exact(&mut door_info_bytes)?;
-        door_info_bytes
-    };
+    let door_info_bytes = reader.read(door_info_len as usize)?;
     let _ = process_door_infos(&door_info_bytes, 0x94, &mut output)?;
     let mut door_info_reader = std::io::Cursor::new(&door_info_bytes);
     let (_, game_header_struct) = read_struct(
@@ -249,7 +236,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     )?;
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
-    let offset = door_info_reader.position();
+    let offset = door_info_reader.position() as usize;
     writeln!(
         &mut output,
         "Current Door Info Offset (Relative): {} (0x{:X})",
@@ -264,7 +251,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
 
     let (_, global_struct) =
         read_struct(&mut door_info_reader, Some("GLOBAL"), &tokens, &mut output)?;
-    let offset = door_info_reader.position();
+    let offset = door_info_reader.position() as usize;
     writeln!(
         &mut output,
         "Current Door Info Offset (Relative): {} (0x{:X})",
@@ -301,7 +288,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     }
 
     //let num_state_files = read_u16_le(&mut reader)?;
-    let offset = door_info_reader.position();
+    let offset = door_info_reader.position() as usize;
     writeln!(
         &mut output,
         "Current Door Info Offset (Relative): {} (0x{:X})",
@@ -315,20 +302,20 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     )?;
 
     let hl1_header_start = reader.position();
-    let (hl1_name, hl1_header, hl1_block) = read_hl_block(&mut reader)?;
-    let hl1_block_start = hl1_header_start + hl1_header.len() as u64 + 4;
+    let (hl1_name, hl1_header, hl1_block) = read_hl_block(&reader)?;
+    let hl1_block_start = hl1_header_start + hl1_header.len() + 4;
     writeln!(&mut output, "HL1 Name: \"{}\"", hl1_name)?;
 
-    let (hl2_name, hl2_header, hl2_block) = read_hl_block(&mut reader)?;
+    let (hl2_name, hl2_header, hl2_block) = read_hl_block(&reader)?;
     writeln!(&mut output, "HL2 Name: \"{}\"", hl2_name)?;
 
-    let (hl3_name, hl3_header, hl3_block) = read_hl_block(&mut reader)?;
+    let (hl3_name, hl3_header, hl3_block) = read_hl_block(&reader)?;
     writeln!(&mut output, "HL3 Name: \"{}\"", hl3_name)?;
 
     // How many are there?
     let mut num_blocks = 3;
     while (reader.position() as usize) < bytes.len() {
-        let (hl1_name, hl1_header, hl1_block) = read_hl_block(&mut reader)?;
+        let (hl1_name, hl1_header, hl1_block) = read_hl_block(&reader)?;
         writeln!(&mut output, "HLX Name: \"{}\"", hl1_name)?;
         num_blocks += 1;
     }
@@ -375,20 +362,13 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         "  token_table_len: {} (0x{:X})",
         token_table_len, token_table_len
     )?;
-    let (num, tokens) = read_token_table(&mut hl1_block_reader, token_table_len as usize)?;
-    writeln!(&mut output, "Tokens ({}):", tokens.len())?;
-    for (offset, token) in &tokens {
-        writeln!(&mut output, "  ({:4})  \"{}\"", offset, token)?;
-    }
-    let num_message = if num == token_count {
-        "matches token_count!"
-    } else {
-        "NO MATCH"
-    };
-    writeln!(&mut output, "Num: {} ({})", num, num_message)?;
-    assert_eq!(num, token_count);
+    let tokens_data_start = hl1_block_reader.position() as usize;
+    let tokens_data_end = tokens_data_start + token_table_len as usize;
+    hl1_block_reader.set_position(tokens_data_end as u64);
+    let tokens = StringTable::parse(&hl1_block[tokens_data_start..tokens_data_end])?;
+    tokens.record(&mut output)?;
 
-    let offset = hl1_block_reader.position();
+    let offset = hl1_block_reader.position() as usize;
     writeln!(
         &mut output,
         "Current HL1 Block Offset (Relative): {} (0x{:X})",
@@ -482,7 +462,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         }
     }
 
-    let offset = hl1_block_reader.position();
+    let offset = hl1_block_reader.position() as usize;
     writeln!(
         &mut output,
         "Current HL1 Block Offset (Relative): {} (0x{:X})",
@@ -740,17 +720,13 @@ fn process_door_infos(
 fn read_struct<'a, R: Read>(
     mut reader: R,
     expected_name: Option<&str>,
-    tokens: &'a [(u32, String)],
+    string_table: &'a StringTable<'a>,
     output: &mut String,
 ) -> Result<(&'a str, Vec<(&'a str, Vec<u8>)>), Box<dyn std::error::Error>> {
     let always_4 = read_u16_le(&mut reader)?;
     assert_eq!(always_4, 4);
     let token_offset = read_u16_le(&mut reader)?;
-    let token = tokens
-        .iter()
-        .find(|(offset, _)| *offset == token_offset as u32)
-        .map(|(_, token)| token.as_str())
-        .unwrap();
+    let token = string_table.get(token_offset as u32).unwrap();
     //assert_eq!(token, expected_name);
     if let Some(expected_name) = expected_name {
         if token != expected_name {
@@ -772,11 +748,7 @@ fn read_struct<'a, R: Read>(
     for _ in 0..fields_saved {
         let payload_size = read_u16_le(&mut reader)?;
         let token_offset = read_u16_le(&mut reader)?;
-        let token = tokens
-            .iter()
-            .find(|(offset, _)| *offset == token_offset as u32)
-            .map(|(_, token)| token.as_str())
-            .unwrap();
+        let token = string_table.get(token_offset as u32).unwrap();
 
         let mut payload = vec![0u8; payload_size as usize];
         reader.read_exact(&mut payload)?;
@@ -789,56 +761,19 @@ fn read_struct<'a, R: Read>(
     Ok((token, fields))
 }
 
-fn read_hl_block<R: Read>(
-    mut reader: R,
-) -> Result<(String, Vec<u8>, Vec<u8>), Box<dyn std::error::Error>> {
+fn read_hl_block<'a>(
+    reader: &'a BytesReader<'a>,
+) -> Result<(&'a str, &'a [u8], &'a [u8]), Box<dyn std::error::Error>> {
     let hl1_header_len = 260;
-    let hl1_header = {
-        let mut hl1_header = vec![0u8; hl1_header_len as usize];
-        reader.read_exact(&mut hl1_header)?;
-        hl1_header
-    };
+    let hl1_header = reader.read(hl1_header_len)?;
     let hl1_name_start = 0;
     let hl1_name_end = find_next_null(&hl1_header, hl1_name_start).unwrap_or(hl1_header.len());
     let hl1_name = str::from_utf8(&hl1_header[hl1_name_start..hl1_name_end])?;
 
-    let hl1_block_len = read_u32_le(&mut reader)?;
-    let hl1_block = {
-        let mut hl1_block = vec![0u8; hl1_block_len as usize];
-        reader.read_exact(&mut hl1_block)?;
-        hl1_block
-    };
+    let hl1_block_len = reader.read_u32_le()?;
+    let hl1_block = reader.read(hl1_block_len as usize)?;
 
-    Ok((hl1_name.to_owned(), hl1_header, hl1_block))
-}
-
-fn read_token_table<R: Read>(
-    mut reader: R,
-    tokens_size: usize,
-) -> Result<(u32, Vec<(u32, String)>), Box<dyn std::error::Error>> {
-    let tokens_data = {
-        let mut tokens_data = vec![0u8; tokens_size];
-        reader.read_exact(&mut tokens_data)?;
-        tokens_data
-    };
-    let mut num = 0;
-    let tokens = {
-        let mut tokens = Vec::new();
-        let mut current = 0;
-        while current < tokens_data.len() {
-            if tokens_data[current] != 0 {
-                let start = current;
-                let end = find_next_null(&tokens_data, start).unwrap();
-                let string = str::from_utf8(&tokens_data[start..end])?;
-                tokens.push((num, string.to_owned()));
-                current = end;
-            }
-            current += 1;
-            num += 1;
-        }
-        tokens
-    };
-    Ok((num, tokens))
+    Ok((hl1_name, hl1_header, hl1_block))
 }
 
 fn get_field<'a>(save_struct: &'a [(&str, Vec<u8>)], field_name: &str) -> Option<&'a Vec<u8>> {
@@ -898,11 +833,12 @@ fn record_fields<'a>(
             "classname" | "model" | "message" | "netname" | "targetname" => {
                 record_str_field(field_data, output)?
             }
-            "modelindex" | "spawnflags" | "flags" => record_u32_field(field_data, output)?,
-            "absmin" | "absmax" | "origin" | "angles" | "v_angle" | "mins" | "maxs"
-            | "view_ofs" | "size" | "m_HackedGunPos" | "movedir" | "m_vecPosition2" => {
-                record_vec3_field(field_data, output)?
+            "modelindex" | "spawnflags" | "flags" | "skillLevel" | "entityCount" => {
+                record_u32_field(field_data, output)?
             }
+            "absmin" | "absmax" | "origin" | "angles" | "v_angle" | "mins" | "maxs"
+            | "view_ofs" | "size" | "m_HackedGunPos" | "movedir" | "m_vecPosition2"
+            | "m_vecAngle2" | "m_vecFinalAngle" => record_vec3_field(field_data, output)?,
             _ => write!(output, "(len: {}) {:02X?}", field_data.len(), field_data)?,
         }
         writeln!(output)?;
@@ -947,3 +883,80 @@ fn record_vec3_field<'a>(
     write!(output, "{:.2}, {:.2}, {:.2}", x, y, z)?;
     Ok(())
 }
+
+struct StringTable<'a> {
+    table: HashMap<u32, &'a str>,
+}
+
+impl<'a> StringTable<'a> {
+    fn parse(bytes: &'a [u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut table = HashMap::new();
+        let mut current = 0;
+        let mut num = 0;
+        while current < bytes.len() {
+            if bytes[current] != 0 {
+                let start = current;
+                let end = find_next_null(&bytes, start).unwrap();
+                let string = str::from_utf8(&bytes[start..end])?;
+                let previous = table.insert(num, string);
+                assert!(previous.is_none());
+                current = end;
+            }
+            current += 1;
+            num += 1;
+        }
+        Ok(Self { table })
+    }
+
+    fn get(&'a self, offset: u32) -> Option<&'a str> {
+        self.table.get(&offset).map(|x| *x)
+    }
+
+    fn len(&self) -> usize {
+        self.table.len()
+    }
+
+    fn record(&self, output: &mut String) -> std::fmt::Result {
+        writeln!(output, "String Table ({}):", self.len())?;
+        let mut keys: Vec<u32> = self.table.keys().map(|x| *x).collect();
+        keys.sort();
+        for key in keys {
+            let value = self.get(key).unwrap();
+            writeln!(output, "  ({:4})  \"{}\"", key, value)?;
+        }
+        Ok(())
+    }
+}
+
+trait SavFieldValue: Sized {
+    fn parse(bytes: &[u8]) -> Result<Self, Box<dyn std::error::Error>>;
+}
+
+impl SavFieldValue for String {
+    fn parse(bytes: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
+        let str = read_str(bytes)?;
+        Ok(str.to_owned())
+    }
+}
+
+macro_rules! sav_struct{
+    ($struct_name:ident ($struct_tag:literal) {
+        $(
+            $field_name:ident ($field_sav_name:literal) : $field_ty:ty
+        ),*
+    }) => {
+        struct $struct_name {
+            $(
+                $field_name : Option<$field_y>,
+            )*
+        }
+
+        impl $struct_name {
+            pub fn parse() -> Self {
+
+            }
+        }
+    };
+}
+
+struct SaveHeader {}
