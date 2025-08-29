@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     sync::atomic::{AtomicUsize, Ordering},
+    fmt::Write,
 };
 
 pub struct BytesReader<'a> {
@@ -184,6 +185,7 @@ impl<T> IntoIo<T> for Result<T, std::str::Utf8Error> {
 
 trait SavFieldValue<'a>: Sized {
     fn parse(reader: &BytesReader<'a>) -> std::io::Result<Self>;
+    fn record(&self, output: &mut String) -> std::fmt::Result;
 }
 
 impl<'a> SavFieldValue<'a> for &'a str {
@@ -192,11 +194,19 @@ impl<'a> SavFieldValue<'a> for &'a str {
         let result = str::from_utf8(bytes).into_io()?;
         Ok(result)
     }
+    
+    fn record(&self, output: &mut String) -> std::fmt::Result {
+        write!(output, "\"{}\"", self)
+    }
 }
 
 impl<'a> SavFieldValue<'a> for u32 {
     fn parse(reader: &BytesReader<'a>) -> std::io::Result<Self> {
         reader.read_u32_le()
+    }
+    
+    fn record(&self, output: &mut String) -> std::fmt::Result {
+        write!(output, "{} (0x{:X})", self, self)
     }
 }
 
@@ -210,6 +220,7 @@ macro_rules! sav_struct{
             $(
                 pub $field_name : Option<$field_ty>,
             )*
+            _marker: std::marker::PhantomData<&'a str>,
         }
 
         impl<'a> $struct_name<'a> {
@@ -251,7 +262,20 @@ macro_rules! sav_struct{
                     $(
                         $field_name,
                     )*
+                    _marker: std::marker::PhantomData
                 })
+            }
+
+            pub fn record(&self, prefix: &str, output: &mut String) -> std::fmt::Result {
+                writeln!(output, "{}{} ({}):", stringify!($struct_name), $struct_tag, prefix)?;
+                $(
+                    if let Some($field_name) = self.$field_name {
+                        write!(output, "{}  {}: ", prefix, stringify!($field_name))?;
+                        $field_name.record(output)?;
+                        writeln!(output)?;
+                    }
+                )*
+                Ok(())
             }
         }
     };
@@ -264,3 +288,18 @@ sav_struct!{
         comment ("comment"): &'a str
     }
 }
+
+sav_struct!{
+    Globals ("GLOBAL") {
+        len ("m_listCount"): u32
+    }
+}
+
+sav_struct!{
+    GlobalEntity ("GENT") {
+        name ("name"): &'a str,
+        level_name ("levelName"): &'a str,
+        state ("state"): u32
+    }
+}
+

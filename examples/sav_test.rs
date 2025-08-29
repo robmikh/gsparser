@@ -7,7 +7,7 @@ use std::{
 use gsparser::{
     bsp::{BspEntity, BspReader},
     mdl::null_terminated_bytes_to_str,
-    sav::{find_next_null, BytesReader, GameHeader, SavHeader, StringTable},
+    sav::{find_next_null, BytesReader, GameHeader, GlobalEntity, Globals, SavHeader, StringTable},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -171,24 +171,24 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
 
-    let (_, global_struct) = read_struct(&reader, Some("GLOBAL"), &tokens, &mut output)?;
+    let globals = Globals::parse(&reader, &tokens)?;
+    globals.record("", &mut output)?;
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
 
     // We should have a 'm_listCount' with the number of door infos
-    let list_count = read_u32_field(&global_struct, "m_listCount").unwrap();
+    let list_count = globals.len.unwrap();
     let mut door_infos = Vec::with_capacity(list_count as usize);
     for _ in 0..list_count {
-        let (_, gent_struct) = read_struct(&reader, Some("GENT"), &tokens, &mut output)?;
+        let gent = GlobalEntity::parse(&reader, &tokens)?;
 
-        let name = read_str_field(&gent_struct, "name")?;
-        let level_name = read_str_field(&gent_struct, "levelName")?;
+        let name = gent.name.unwrap();
+        let level_name = gent.level_name.unwrap();
+        let state = gent.state;
 
-        let state_bytes = get_field(&gent_struct, "state");
-
-        door_infos.push((name.to_owned(), level_name.to_owned(), state_bytes.clone()));
+        door_infos.push((name, level_name, state));
     }
-    writeln!(&mut output, "Door infos ({}):", list_count)?;
+    writeln!(&mut output, "Global Entities ({}):", list_count)?;
     for (name, level_name, state_bytes) in &door_infos {
         writeln!(
             &mut output,
@@ -681,18 +681,3 @@ impl<'a> SavTestRecord for StringTable<'a> {
     }
 }
 
-impl<'a> SavTestRecord for GameHeader<'a> {
-    fn record(&self, prefix: &str, output: &mut String) -> std::fmt::Result {
-        writeln!(output, "{}Game Header:", prefix)?;
-        if let Some(map_count) = self.map_count {
-            writeln!(output, "{}  map_count: {} (0x{:X})", prefix, map_count, map_count)?;
-        }
-        if let Some(map_name) = self.map_name {
-            writeln!(output, "{}  map_name: \"{}\"", prefix, map_name)?;
-        }
-        if let Some(comment) = self.comment {
-            writeln!(output, "{}  comment: \"{}\"", prefix, comment)?;
-        }
-        Ok(())
-    }
-}
