@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
-    sync::atomic::{AtomicUsize, Ordering},
     fmt::Write,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 pub struct BytesReader<'a> {
@@ -164,7 +164,6 @@ pub fn find_next_non_null(bytes: &[u8], start: usize) -> Option<usize> {
     None
 }
 
-
 trait IntoIo<T> {
     fn into_io(self) -> std::io::Result<T>;
 }
@@ -173,12 +172,10 @@ impl<T> IntoIo<T> for Result<T, std::str::Utf8Error> {
     fn into_io(self) -> std::io::Result<T> {
         match self {
             Ok(result) => Ok(result),
-            Err(error) => {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{}", error),
-                ))
-            }
+            Err(error) => Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{}", error),
+            )),
         }
     }
 }
@@ -194,7 +191,7 @@ impl<'a> SavFieldValue<'a> for &'a str {
         let result = str::from_utf8(bytes).into_io()?;
         Ok(result)
     }
-    
+
     fn record(&self, output: &mut String) -> std::fmt::Result {
         write!(output, "\"{}\"", self)
     }
@@ -204,7 +201,7 @@ impl<'a> SavFieldValue<'a> for u32 {
     fn parse(reader: &BytesReader<'a>) -> std::io::Result<Self> {
         reader.read_u32_le()
     }
-    
+
     fn record(&self, output: &mut String) -> std::fmt::Result {
         write!(output, "{} (0x{:X})", self, self)
     }
@@ -281,7 +278,7 @@ macro_rules! sav_struct{
     };
 }
 
-sav_struct!{
+sav_struct! {
     GameHeader ("GameHeader") {
         map_count ("mapCount"): u32,
         map_name ("mapName"): &'a str,
@@ -289,13 +286,13 @@ sav_struct!{
     }
 }
 
-sav_struct!{
+sav_struct! {
     Globals ("GLOBAL") {
         len ("m_listCount"): u32
     }
 }
 
-sav_struct!{
+sav_struct! {
     GlobalEntity ("GENT") {
         name ("name"): &'a str,
         level_name ("levelName"): &'a str,
@@ -303,7 +300,7 @@ sav_struct!{
     }
 }
 
-sav_struct!{
+sav_struct! {
     EntityTable ("ETABLE") {
         location ("location"): u32,
         size ("size"): u32,

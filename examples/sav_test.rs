@@ -7,7 +7,10 @@ use std::{
 use gsparser::{
     bsp::{BspEntity, BspReader},
     mdl::null_terminated_bytes_to_str,
-    sav::{find_next_null, BytesReader, EntityTable, GameHeader, GlobalEntity, Globals, HlBlock, SavHeader, StringTable},
+    sav::{
+        BytesReader, EntityTable, GameHeader, GlobalEntity, Globals, HlBlock, SavHeader,
+        StringTable, find_next_null,
+    },
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -635,7 +638,6 @@ fn record_vec3_field<'a>(
     Ok(())
 }
 
-
 trait SavTestRecord {
     fn record(&self, prefix: &str, output: &mut String) -> std::fmt::Result;
 }
@@ -665,4 +667,3 @@ impl<'a> SavTestRecord for StringTable<'a> {
         Ok(())
     }
 }
-
