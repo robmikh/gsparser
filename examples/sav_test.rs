@@ -7,7 +7,7 @@ use std::{
 use gsparser::{
     bsp::{BspEntity, BspReader},
     mdl::null_terminated_bytes_to_str,
-    sav::{find_next_null, BytesReader, GameHeader, GlobalEntity, Globals, SavHeader, StringTable},
+    sav::{find_next_null, BytesReader, EntityTable, GameHeader, GlobalEntity, Globals, HlBlock, SavHeader, StringTable},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -200,22 +200,21 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     let offset = reader.position();
     writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
 
-    let hl1_header_start = reader.position();
-    let (hl1_name, hl1_header, hl1_block) = read_hl_block(&reader)?;
-    let hl1_block_start = hl1_header_start + hl1_header.len() + 4;
-    writeln!(&mut output, "HL1 Name: \"{}\"", hl1_name)?;
+    let hl1_block = HlBlock::parse(&reader)?;
+    let hl1_block_start = hl1_block.block_offset;
+    writeln!(&mut output, "HL1 Name: \"{}\"", hl1_block.name)?;
 
-    let (hl2_name, hl2_header, hl2_block) = read_hl_block(&reader)?;
-    writeln!(&mut output, "HL2 Name: \"{}\"", hl2_name)?;
+    let hl2_block = HlBlock::parse(&reader)?;
+    writeln!(&mut output, "HL2 Name: \"{}\"", hl2_block.name)?;
 
-    let (hl3_name, hl3_header, hl3_block) = read_hl_block(&reader)?;
-    writeln!(&mut output, "HL3 Name: \"{}\"", hl3_name)?;
+    let hl3_block = HlBlock::parse(&reader)?;
+    writeln!(&mut output, "HL3 Name: \"{}\"", hl3_block.name)?;
 
     // How many are there?
     let mut num_blocks = 3;
     while (reader.position() as usize) < bytes.len() {
-        let (hl1_name, hl1_header, hl1_block) = read_hl_block(&reader)?;
-        writeln!(&mut output, "HLX Name: \"{}\"", hl1_name)?;
+        let hlx_block = HlBlock::parse(&reader)?;
+        writeln!(&mut output, "HLX Name: \"{}\"", hlx_block.name)?;
         num_blocks += 1;
     }
     writeln!(
@@ -228,8 +227,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     assert_eq!(offset as usize, bytes.len());
 
     // Poke at the first HL1 block
-    let mut hl1_block_reader = std::io::Cursor::new(&hl1_block);
-    let hl1_block_reader = BytesReader::new(hl1_block);
+    let hl1_block_reader = BytesReader::new(hl1_block.block_bytes);
     let magic = hl1_block_reader.read(4)?;
     assert_eq!(&magic, b"VALV");
     let version = hl1_block_reader.read_u32_le()?;
@@ -264,7 +262,9 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
 
     let mut num_etables = 0;
     for _ in 0..expected_num_etables {
-        let etable_struct = read_struct(&hl1_block_reader, Some("ETABLE"), &tokens, &mut output)?;
+        //let etable_struct = read_struct(&hl1_block_reader, Some("ETABLE"), &tokens, &mut output)?;
+        let etable = EntityTable::parse(&hl1_block_reader, &tokens)?;
+        etable.record("", &mut output)?;
         num_etables += 1;
     }
     writeln!(
@@ -525,21 +525,6 @@ fn read_struct<'a, 'b>(
     }
 
     Ok((token, fields))
-}
-
-fn read_hl_block<'a>(
-    reader: &'a BytesReader<'a>,
-) -> Result<(&'a str, &'a [u8], &'a [u8]), Box<dyn std::error::Error>> {
-    let hl1_header_len = 260;
-    let hl1_header = reader.read(hl1_header_len)?;
-    let hl1_name_start = 0;
-    let hl1_name_end = find_next_null(&hl1_header, hl1_name_start).unwrap_or(hl1_header.len());
-    let hl1_name = str::from_utf8(&hl1_header[hl1_name_start..hl1_name_end])?;
-
-    let hl1_block_len = reader.read_u32_le()?;
-    let hl1_block = reader.read(hl1_block_len as usize)?;
-
-    Ok((hl1_name, hl1_header, hl1_block))
 }
 
 fn get_field<'a, 'b>(save_struct: &'a [(&str, &'b [u8])], field_name: &str) -> Option<&'b [u8]> {

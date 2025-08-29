@@ -267,7 +267,7 @@ macro_rules! sav_struct{
             }
 
             pub fn record(&self, prefix: &str, output: &mut String) -> std::fmt::Result {
-                writeln!(output, "{}{} ({}):", stringify!($struct_name), $struct_tag, prefix)?;
+                writeln!(output, "{}{} ({}):", prefix, stringify!($struct_name), $struct_tag)?;
                 $(
                     if let Some($field_name) = self.$field_name {
                         write!(output, "{}  {}: ", prefix, stringify!($field_name))?;
@@ -303,3 +303,40 @@ sav_struct!{
     }
 }
 
+sav_struct!{
+    EntityTable ("ETABLE") {
+        location ("location"): u32,
+        size ("size"): u32,
+        class_name ("classname"): &'a str,
+        flags ("flags"): u32,
+        id ("id"): u32
+    }
+}
+
+pub struct HlBlock<'a> {
+    pub name: &'a str,
+    pub header_bytes: &'a [u8],
+    pub block_offset: usize,
+    pub block_bytes: &'a [u8],
+}
+
+impl<'a> HlBlock<'a> {
+    pub fn parse(reader: &'a BytesReader<'a>) -> std::io::Result<Self> {
+        let hl1_header_len = 260;
+        let hl1_header = reader.read(hl1_header_len)?;
+        let hl1_name_start = 0;
+        let hl1_name_end = find_next_null(&hl1_header, hl1_name_start).unwrap_or(hl1_header.len());
+        let hl1_name = str::from_utf8(&hl1_header[hl1_name_start..hl1_name_end]).into_io()?;
+
+        let hl1_block_len = reader.read_u32_le()?;
+        let block_offset = reader.position();
+        let hl1_block = reader.read(hl1_block_len as usize)?;
+
+        Ok(Self {
+            name: hl1_name,
+            header_bytes: hl1_header,
+            block_offset,
+            block_bytes: hl1_block,
+        })
+    }
+}
