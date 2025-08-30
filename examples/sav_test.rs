@@ -128,6 +128,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 */
+
+                let sav_block_folder_path = {
+                    let mut path = output_path.clone();
+                    path.push(sav_path.file_name().unwrap().to_str().unwrap());
+                    path
+                };
+                if !sav_block_folder_path.exists() {
+                    std::fs::create_dir(&sav_block_folder_path)?;
+                }
+                for (name, output) in data.hl_block_outputs {
+                    let mut path = sav_block_folder_path.clone();
+                    path.push(format!("{}.txt", name));
+                    std::fs::write(path, output)?;
+                }
             }
             Err(error) => {
                 files_with_errors.push((sav_path.clone(), format!("{}", error)));
@@ -243,16 +257,15 @@ fn process_path<P: AsRef<Path>>(
     // Poke at the first HL1 block
     let mut hl_block_outputs = Vec::with_capacity(hl_blocks.len());
     for hl_block in &hl_blocks {
-        //let mut output = String::new();
-        writeln!(output, "{}", hl_block.name)?;
+        let mut output = String::new();
+        writeln!(&mut output, "{}", hl_block.name)?;
         {
-            //let output = &mut output;
+            let output = &mut output;
             if hl_block.name.ends_with("HL1") {
                 process_hl_block(&hl_block, output)?;
             }
         }
-        //hl_block_outputs.push((hl_block.name.to_owned(), output));
-        writeln!(output)?;
+        hl_block_outputs.push((hl_block.name.to_owned(), output));
     }
     writeln!(output, "")?;
 
