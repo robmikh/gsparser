@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fmt::Write,
     sync::atomic::{AtomicUsize, Ordering},
@@ -100,7 +101,7 @@ pub struct StringTable<'a> {
 }
 
 impl<'a> StringTable<'a> {
-    pub fn parse(reader: &'a BytesReader<'a>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn parse(reader: &BytesReader<'a>) -> Result<Self, Box<dyn std::error::Error>> {
         let _token_count = reader.read_u32_le()?;
         let tokens_size = reader.read_u32_le()?;
         let string_table_bytes = reader.read(tokens_size as usize)?;
@@ -127,7 +128,7 @@ impl<'a> StringTable<'a> {
         Ok(Self { table })
     }
 
-    pub fn get(&'a self, offset: u32) -> Option<&'a str> {
+    pub fn get(&self, offset: u32) -> Option<&str> {
         self.table.get(&offset).map(|x| *x)
     }
 
@@ -207,7 +208,36 @@ impl<'a> SavFieldValue<'a> for u32 {
     }
 }
 
-macro_rules! sav_struct{
+impl<'a, const N: usize> SavFieldValue<'a> for [u8; N] {
+    fn parse(reader: &BytesReader<'a>) -> std::io::Result<Self> {
+        reader.read_and_copy()
+    }
+
+    fn record(&self, output: &mut String) -> std::fmt::Result {
+        write!(output, "{:02X?}", self)
+    }
+}
+
+fn resolve_string<'a>(bytes: &'a [u8]) -> Cow<'a, str> {
+    match str::from_utf8(bytes) {
+        Ok(entities) => Cow::Borrowed(entities),
+        Err(_) => String::from_utf8_lossy(bytes),
+    }
+}
+
+impl<'a> SavFieldValue<'a> for Cow<'a, str> {
+    fn parse(reader: &BytesReader<'a>) -> std::io::Result<Self> {
+        let bytes = reader.read_until_null()?;
+        let result = resolve_string(bytes);
+        Ok(result)
+    }
+
+    fn record(&self, output: &mut String) -> std::fmt::Result {
+        write!(output, "\"{}\"", self)
+    }
+}
+
+macro_rules! sav_tagged_struct{
     ($struct_name:ident ($struct_tag:literal) {
         $(
             $field_name:ident ($field_sav_name:literal) : $field_ty:ty
@@ -278,7 +308,47 @@ macro_rules! sav_struct{
     };
 }
 
-sav_struct! {
+macro_rules! sav_ordered_struct{
+    ($struct_name:ident {
+        $(
+            $field_name:ident : $field_ty:ty
+        ),*
+    }) => {
+        pub struct $struct_name<'a> {
+            $(
+                pub $field_name : $field_ty,
+            )*
+            _marker: std::marker::PhantomData<&'a str>,
+        }
+
+        impl<'a> $struct_name<'a> {
+            pub fn parse(reader: &'a BytesReader<'a>) -> std::io::Result<Self> {
+                // Read each field
+                $(
+                    let $field_name  = <$field_ty>::parse(reader)?;
+                )*
+                Ok(Self {
+                    $(
+                        $field_name,
+                    )*
+                    _marker: std::marker::PhantomData
+                })
+            }
+
+            pub fn record(&self, prefix: &str, output: &mut String) -> std::fmt::Result {
+                writeln!(output, "{}{}:", prefix, stringify!($struct_name))?;
+                $(
+                    write!(output, "{}  {}: ", prefix, stringify!($field_name))?;
+                    self.$field_name.record(output)?;
+                    writeln!(output)?;
+                )*
+                Ok(())
+            }
+        }
+    };
+}
+
+sav_tagged_struct! {
     GameHeader ("GameHeader") {
         map_count ("mapCount"): u32,
         map_name ("mapName"): &'a str,
@@ -286,13 +356,13 @@ sav_struct! {
     }
 }
 
-sav_struct! {
+sav_tagged_struct! {
     Globals ("GLOBAL") {
         len ("m_listCount"): u32
     }
 }
 
-sav_struct! {
+sav_tagged_struct! {
     GlobalEntity ("GENT") {
         name ("name"): &'a str,
         level_name ("levelName"): &'a str,
@@ -300,7 +370,7 @@ sav_struct! {
     }
 }
 
-sav_struct! {
+sav_tagged_struct! {
     EntityTable ("ETABLE") {
         location ("location"): u32,
         size ("size"): u32,
@@ -335,5 +405,21 @@ impl<'a> HlBlock<'a> {
             block_offset,
             block_bytes: hl1_block,
         })
+    }
+}
+
+sav_ordered_struct! {
+    Hl1BlockHeader {
+        magic: [u8; 4],
+        version: u32,
+        unknown_1: u32,
+        expected_num_etables: u32
+    }
+}
+
+impl<'a> Hl1BlockHeader<'a> {
+    pub fn validate(&self) {
+        assert_eq!(&self.magic, b"VALV");
+        assert_eq!(self.version, 0x71);
     }
 }

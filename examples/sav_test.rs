@@ -8,8 +8,8 @@ use gsparser::{
     bsp::{BspEntity, BspReader},
     mdl::null_terminated_bytes_to_str,
     sav::{
-        BytesReader, EntityTable, GameHeader, GlobalEntity, Globals, HlBlock, SavHeader,
-        StringTable, find_next_null,
+        BytesReader, EntityTable, GameHeader, GlobalEntity, Globals, Hl1BlockHeader, HlBlock,
+        SavHeader, StringTable, find_next_null,
     },
 };
 
@@ -45,85 +45,95 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vec![sav_path]
     };
 
+    let mut files_with_errors = Vec::new();
     for sav_path in sav_paths {
         println!("Processing: {}", sav_path.display());
-        let data = process_path(&sav_path)?;
-        println!("  num worldspawn: {}", data.num_world_spawns);
+        let mut output = String::new();
+        let data = process_path(&sav_path, &mut output);
+        match data {
+            Ok(data) => {
+                println!("  num worldspawn: {}", data.num_world_spawns);
 
-        let map_path = {
-            let mut path = game_root.clone();
-            path.push("maps");
-            path.push(&data.map_name);
-            path.set_extension("bsp");
-            path
-        };
-        println!("  Loading map from {}", map_path.display());
-        let bsp_data = std::fs::read(map_path)?;
-        let reader = BspReader::read(bsp_data);
-        let entity_string = resolve_map_entity_string(&reader);
-        let entities = BspEntity::parse_entities(&entity_string);
-        let num_entities = entities.len();
+                let map_path = {
+                    let mut path = game_root.clone();
+                    path.push("maps");
+                    path.push(&data.map_name);
+                    path.set_extension("bsp");
+                    path
+                };
+                println!("  Loading map from {}", map_path.display());
+                let bsp_data = std::fs::read(map_path)?;
+                let reader = BspReader::read(bsp_data);
+                let entity_string = resolve_map_entity_string(&reader);
+                let entities = BspEntity::parse_entities(&entity_string);
+                let num_entities = entities.len();
 
-        println!(
-            "  num_pairs: {}    num_entities: {}    remainder: {}    divided: {}",
-            data.num_entries,
-            num_entities,
-            data.num_entries % num_entities,
-            data.num_entries as f64 / num_entities as f64
-        );
-        //assert!(data.num_pairs % num_entities == 0, "num_pairs: {}    num_entities: {}    remainder: {}    divided: {}", data.num_entries, num_entities, data.num_entries % num_entities, data.num_entries as f64 / num_entities as f64);
+                println!(
+                    "  num_pairs: {}    num_entities: {}    remainder: {}    divided: {}",
+                    data.num_entries,
+                    num_entities,
+                    data.num_entries % num_entities,
+                    data.num_entries as f64 / num_entities as f64
+                );
+                //assert!(data.num_pairs % num_entities == 0, "num_pairs: {}    num_entities: {}    remainder: {}    divided: {}", data.num_entries, num_entities, data.num_entries % num_entities, data.num_entries as f64 / num_entities as f64);
 
-        assert!(data.num_world_spawns > 1);
-        for window in data.world_spawn_indices.windows(2) {
-            let first_index = window[0];
-            let second_index = window[1];
-            let between_world_spawns = second_index - first_index;
-            println!(
-                "  Entries between world spawns {} and {}: {}",
-                first_index, second_index, between_world_spawns
-            );
+                assert!(data.num_world_spawns > 1);
+                for window in data.world_spawn_indices.windows(2) {
+                    let first_index = window[0];
+                    let second_index = window[1];
+                    let between_world_spawns = second_index - first_index;
+                    println!(
+                        "  Entries between world spawns {} and {}: {}",
+                        first_index, second_index, between_world_spawns
+                    );
+                }
+
+                /*
+                let mut map_entities_iter = entities.iter();
+                let mut sav_entities_iter = data.entities.iter();
+                while let Some((sav_entity, _)) = sav_entities_iter.next() {
+                    let should_skip = |class_name: &str| -> bool {
+                        // Some of these we skip because they are never present at runtime (e.g. lights).
+                        // Others we skip becuase they aren't represented in the map (e.g. player).
+                        // The last category we skip are entities that can be removed at runtime (e.g. trigger_once).
+                        // POSTMORTEM: Nearly every entity can be removed at runtime... this won't work. It's probably the case
+                        //             that when loading a save file in Half-Life, no entities are spawned via the information
+                        //             in the bsp. Instead, all information about what entities to spawn and what their properties
+                        //             are are in the save file. Unless this information is in other parts of the save file...
+                        match class_name {
+                            "light" | "player" | "light_spot" | "info_node" | "trigger_once" | "trigger_auto" | "item_suit" | "func_breakable" | "env_explosion" | "env_shooter" | "scripted_sentence" => true,
+                            _ => false,
+                        }
+                    };
+                    if should_skip(&sav_entity) {
+                        continue;
+                    }
+
+                    let mut found_match = false;
+                    while let Some(map_entity) = map_entities_iter.next() {
+                        let map_entity_class_name = map_entity.0["classname"];
+                        // Skip-able
+                        if should_skip(&map_entity_class_name) {
+                            continue;
+                        }
+                        if map_entity_class_name == sav_entity.as_str() {
+                            found_match = true;
+                            break;
+                        } else {
+                            panic!("Unskippable entity \"{}\" found when looking for \"{}\"!", map_entity_class_name, sav_entity);
+                        }
+                    }
+                    if !found_match {
+                        panic!("Match not found!");
+                    }
+                }
+                */
+            }
+            Err(error) => {
+                files_with_errors.push((sav_path.clone(), format!("{}", error)));
+                println!("  ERROR: {}", error);
+            }
         }
-
-        /*
-        let mut map_entities_iter = entities.iter();
-        let mut sav_entities_iter = data.entities.iter();
-        while let Some((sav_entity, _)) = sav_entities_iter.next() {
-            let should_skip = |class_name: &str| -> bool {
-                // Some of these we skip because they are never present at runtime (e.g. lights).
-                // Others we skip becuase they aren't represented in the map (e.g. player).
-                // The last category we skip are entities that can be removed at runtime (e.g. trigger_once).
-                // POSTMORTEM: Nearly every entity can be removed at runtime... this won't work. It's probably the case
-                //             that when loading a save file in Half-Life, no entities are spawned via the information
-                //             in the bsp. Instead, all information about what entities to spawn and what their properties
-                //             are are in the save file. Unless this information is in other parts of the save file...
-                match class_name {
-                    "light" | "player" | "light_spot" | "info_node" | "trigger_once" | "trigger_auto" | "item_suit" | "func_breakable" | "env_explosion" | "env_shooter" | "scripted_sentence" => true,
-                    _ => false,
-                }
-            };
-            if should_skip(&sav_entity) {
-                continue;
-            }
-
-            let mut found_match = false;
-            while let Some(map_entity) = map_entities_iter.next() {
-                let map_entity_class_name = map_entity.0["classname"];
-                // Skip-able
-                if should_skip(&map_entity_class_name) {
-                    continue;
-                }
-                if map_entity_class_name == sav_entity.as_str() {
-                    found_match = true;
-                    break;
-                } else {
-                    panic!("Unskippable entity \"{}\" found when looking for \"{}\"!", map_entity_class_name, sav_entity);
-                }
-            }
-            if !found_match {
-                panic!("Match not found!");
-            }
-        }
-        */
 
         let sav_output_path = {
             let mut path = output_path.clone();
@@ -131,9 +141,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             path.set_extension("txt");
             path
         };
-        std::fs::write(sav_output_path, &data.output)?;
+        std::fs::write(sav_output_path, &output)?;
 
         println!();
+    }
+
+    if !files_with_errors.is_empty() {
+        println!("ERRORS:");
+        for (sav_path, error_text) in files_with_errors {
+            println!("  {}", sav_path.display());
+            println!("    {}", error_text);
+        }
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Experienced failures while processing sav files!",
+        )));
     }
 
     Ok(())
@@ -145,39 +167,40 @@ struct SavData {
     num_world_spawns: usize,
     entries: Vec<(usize, String)>,
     world_spawn_indices: Vec<usize>,
-    output: String,
     entities: Vec<(String, Vec<(String, Vec<(String, Vec<u8>)>)>)>,
+    hl_block_outputs: Vec<(String, String)>,
 }
 
-fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::error::Error>> {
+fn process_path<P: AsRef<Path>>(
+    sav_path: P,
+    output: &mut String,
+) -> Result<SavData, Box<dyn std::error::Error>> {
     let bytes = std::fs::read(sav_path)?;
-
-    let mut output = String::new();
 
     let reader = BytesReader::new(&bytes);
     // Header
     let sav_header = SavHeader::parse(&reader)?;
-    sav_header.record("", &mut output)?;
+    sav_header.record("", output)?;
 
     // Root string table
     let tokens = StringTable::parse(&reader)?;
-    tokens.record("", &mut output)?;
-    writeln!(&mut output)?;
+    tokens.record("", output)?;
+    writeln!(output)?;
 
     let offset = reader.position();
-    writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
+    writeln!(output, "Current Offset: {} (0x{:X})", offset, offset)?;
 
     // Read game header
     let game_header = GameHeader::parse(&reader, &tokens)?;
-    game_header.record("", &mut output)?;
+    game_header.record("", output)?;
     let map_name = game_header.map_name.unwrap();
     let offset = reader.position();
-    writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
+    writeln!(output, "Current Offset: {} (0x{:X})", offset, offset)?;
 
     let globals = Globals::parse(&reader, &tokens)?;
-    globals.record("", &mut output)?;
+    globals.record("", output)?;
     let offset = reader.position();
-    writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
+    writeln!(output, "Current Offset: {} (0x{:X})", offset, offset)?;
 
     // We should have a 'm_listCount' with the number of door infos
     let list_count = globals.len.unwrap();
@@ -191,161 +214,47 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
 
         door_infos.push((name, level_name, state));
     }
-    writeln!(&mut output, "Global Entities ({}):", list_count)?;
+    writeln!(output, "Global Entities ({}):", list_count)?;
     for (name, level_name, state_bytes) in &door_infos {
         writeln!(
-            &mut output,
+            output,
             "  {:24} ({:10}) ({:02X?})",
             name, level_name, state_bytes
         )?;
     }
 
     let offset = reader.position();
-    writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
-
-    let hl1_block = HlBlock::parse(&reader)?;
-    let hl1_block_start = hl1_block.block_offset;
-    writeln!(&mut output, "HL1 Name: \"{}\"", hl1_block.name)?;
-
-    let hl2_block = HlBlock::parse(&reader)?;
-    writeln!(&mut output, "HL2 Name: \"{}\"", hl2_block.name)?;
-
-    let hl3_block = HlBlock::parse(&reader)?;
-    writeln!(&mut output, "HL3 Name: \"{}\"", hl3_block.name)?;
+    writeln!(output, "Current Offset: {} (0x{:X})", offset, offset)?;
 
     // How many are there?
-    let mut num_blocks = 3;
+    let mut num_blocks = 0;
+    let mut hl_blocks = Vec::new();
     while (reader.position() as usize) < bytes.len() {
         let hlx_block = HlBlock::parse(&reader)?;
-        writeln!(&mut output, "HLX Name: \"{}\"", hlx_block.name)?;
+        writeln!(output, "HL Block Name: \"{}\"", hlx_block.name)?;
+        hl_blocks.push(hlx_block);
         num_blocks += 1;
     }
-    writeln!(
-        &mut output,
-        "Num HL blocks: {} (0x{:X})",
-        num_blocks, num_blocks
-    )?;
+    writeln!(output, "Num HL blocks: {} (0x{:X})", num_blocks, num_blocks)?;
     let offset = reader.position();
-    writeln!(&mut output, "Current Offset: {} (0x{:X})", offset, offset)?;
+    writeln!(output, "Current Offset: {} (0x{:X})", offset, offset)?;
     assert_eq!(offset as usize, bytes.len());
 
     // Poke at the first HL1 block
-    let hl1_block_reader = BytesReader::new(hl1_block.block_bytes);
-    let magic = hl1_block_reader.read(4)?;
-    assert_eq!(&magic, b"VALV");
-    let version = hl1_block_reader.read_u32_le()?;
-    assert_eq!(version, 0x71);
-    let unknown_1 = hl1_block_reader.read_u32_le()?;
-    writeln!(
-        &mut output,
-        "  unknown_1: {} (0x{:X})",
-        unknown_1, unknown_1
-    )?;
-    let expected_num_etables = hl1_block_reader.read_u32_le()?;
-    writeln!(
-        &mut output,
-        "  expected_num_etables: {} (0x{:X})",
-        expected_num_etables, expected_num_etables
-    )?;
-    let tokens = StringTable::parse(&hl1_block_reader)?;
-    tokens.record("", &mut output)?;
-
-    let offset = hl1_block_reader.position() as usize;
-    writeln!(
-        &mut output,
-        "Current HL1 Block Offset (Relative): {} (0x{:X})",
-        offset, offset
-    )?;
-    writeln!(
-        &mut output,
-        "Current HL1 Block Offset: {} (0x{:X})",
-        hl1_block_start + offset,
-        hl1_block_start + offset
-    )?;
-
-    let mut num_etables = 0;
-    for _ in 0..expected_num_etables {
-        //let etable_struct = read_struct(&hl1_block_reader, Some("ETABLE"), &tokens, &mut output)?;
-        let etable = EntityTable::parse(&hl1_block_reader, &tokens)?;
-        etable.record("", &mut output)?;
-        num_etables += 1;
-    }
-    writeln!(
-        &mut output,
-        "num_etables: {} ({})",
-        num_etables, num_etables
-    )?;
-    assert_eq!(num_etables, expected_num_etables);
-
-    let (_, save_header) =
-        read_struct(&hl1_block_reader, Some("Save Header"), &tokens, &mut output)?;
-    let connection_count = read_u32_field(&save_header, "connectionCount").unwrap();
-    for _ in 0..connection_count {
-        let (_, adjacency_data) =
-            read_struct(&hl1_block_reader, Some("ADJACENCY"), &tokens, &mut output)?;
-    }
-
-    // Read "LIGHTSTYLE" structs
-    let light_style_count = read_u32_field(&save_header, "lightStyleCount").unwrap();
-    for _ in 0..light_style_count {
-        let (_, light_style) =
-            read_struct(&hl1_block_reader, Some("LIGHTSTYLE"), &tokens, &mut output)?;
-    }
-
-    // Read "ENTVARS" structs
-    let entity_count = read_u32_field(&save_header, "entityCount").unwrap();
-    //println!("entity_count: {}", entity_count);
-    //println!("num_etables: {}", num_etables);
-    let mut current_entity: Option<Vec<(&str, Vec<(&str, &[u8])>)>> = None;
-    let mut entities = Vec::with_capacity(entity_count as usize);
-    while entities.len() < entity_count as usize {
-        //let offset = hl1_block_reader.position() + hl1_block_start;
-        //println!("  offset: 0x{:X}", offset);
-        let (ty, entity_vars) = match read_struct(&hl1_block_reader, None, &tokens, &mut output) {
-            Ok(result) => result,
-            Err(error) => {
-                writeln!(&mut output, "ERROR: {}", error)?;
-                break;
-            }
-        };
-        if ty == "ENTVARS" {
-            if let Some(current_entity) = current_entity.take() {
-                entities.push(current_entity);
+    let mut hl_block_outputs = Vec::with_capacity(hl_blocks.len());
+    for hl_block in &hl_blocks {
+        //let mut output = String::new();
+        writeln!(output, "{}", hl_block.name)?;
+        {
+            //let output = &mut output;
+            if hl_block.name.ends_with("HL1") {
+                process_hl_block(&hl_block, output)?;
             }
         }
-        if let Some(current_entity) = current_entity.as_mut() {
-            current_entity.push((ty, entity_vars));
-        } else {
-            let mut entity_fragments = Vec::new();
-            entity_fragments.push((ty, entity_vars));
-            current_entity = Some(entity_fragments);
-        }
+        //hl_block_outputs.push((hl_block.name.to_owned(), output));
+        writeln!(output)?;
     }
-    writeln!(&mut output, "Entities:")?;
-    for entity in &entities {
-        // The first should be ENTVARS which should have a class name
-        let class_name = read_str_field(&entity[0].1, "classname")?;
-        writeln!(&mut output, "  {}", class_name)?;
-        for fragment in entity {
-            writeln!(&mut output, "    {}", fragment.0)?;
-            record_fields(&fragment.1, "      ", &mut output)?;
-        }
-    }
-
-    let offset = hl1_block_reader.position() as usize;
-    writeln!(
-        &mut output,
-        "Current HL1 Block Offset (Relative): {} (0x{:X})",
-        offset, offset
-    )?;
-    writeln!(
-        &mut output,
-        "Current HL1 Block Offset: {} (0x{:X})",
-        hl1_block_start + offset,
-        hl1_block_start + offset
-    )?;
-
-    writeln!(&mut output, "")?;
+    writeln!(output, "")?;
 
     // Look for: XXBD01
     // TODO: Is there a fixed or specified place to start?
@@ -355,7 +264,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     let mut first_offset_and_class_name = None;
     let mut entries = Vec::new();
     let mut world_spawn_indices = Vec::new();
-    writeln!(&mut output, "XXBD01 Matches:")?;
+    writeln!(output, "XXBD01 Matches:")?;
     while current + window_len < bytes.len() {
         let current_bytes = &bytes[current..current + window_len];
 
@@ -368,7 +277,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
             let class_name_result = std::str::from_utf8(class_name_bytes);
             if class_name_result.is_err() {
                 writeln!(
-                    &mut output,
+                    output,
                     "WARNING: Assuming false positive at {:X} due to invalid utf8 class name.",
                     current
                 )?;
@@ -379,7 +288,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
 
             if class_name.len() + 1 != number {
                 writeln!(
-                    &mut output,
+                    output,
                     "WARNING: Assuming false positive at {:X} due to wrong class name length. ",
                     current
                 )?;
@@ -396,7 +305,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
                 world_spawn_indices.push(entries.len() - 1);
             }
 
-            writeln!(&mut output, "  {:6X} {:04} {}", current, number, class_name)?;
+            writeln!(output, "  {:6X} {:04} {}", current, number, class_name)?;
             current = class_name_end + 1;
         } else {
             current += 1;
@@ -424,15 +333,15 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         let class_name = std::str::from_utf8(class_name_bytes)?;
 
         writeln!(
-            &mut output,
+            output,
             "  {:6X} {:8} {:8} {:8}  {}",
             offset, offset_distance, end_distance, end_to_next_offset, class_name
         )?;
     }
 
-    writeln!(&mut output, "There are {} pairs.", offsets_and_ends.len())?;
+    writeln!(output, "There are {} pairs.", offsets_and_ends.len())?;
     writeln!(
-        &mut output,
+        output,
         "There are {} pairs that have a worldspawn class name",
         world_spawn_indices.len()
     )?;
@@ -442,6 +351,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
     let num_entries = entries.len();
     let num_world_spawns = world_spawn_indices.len();
 
+    /*
     let entities = {
         let mut new_entities = Vec::with_capacity(entities.len());
         for fragments in entities {
@@ -461,6 +371,7 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         }
         new_entities
     };
+    */
 
     Ok(SavData {
         map_name: map_name.to_owned(),
@@ -468,8 +379,8 @@ fn process_path<P: AsRef<Path>>(sav_path: P) -> Result<SavData, Box<dyn std::err
         num_world_spawns,
         entries,
         world_spawn_indices,
-        output,
-        entities,
+        entities: Vec::new(),
+        hl_block_outputs,
     })
 }
 
@@ -584,7 +495,8 @@ fn record_fields<'a>(
     for (field_name, field_data) in fields {
         write!(output, "{}{}: ", prefix, field_name)?;
         match *field_name {
-            "classname" | "model" | "message" | "netname" | "targetname" => {
+            "message" => record_lossy_str_field(field_data, output)?,
+            "classname" | "model" | "netname" | "targetname" => {
                 record_str_field(field_data, output)?
             }
             "modelindex" | "spawnflags" | "flags" | "skillLevel" | "entityCount" => {
@@ -597,6 +509,15 @@ fn record_fields<'a>(
         }
         writeln!(output)?;
     }
+    Ok(())
+}
+
+fn record_lossy_str_field<'a>(
+    field_data: &'a [u8],
+    output: &mut String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let field_str = String::from_utf8_lossy(field_data);
+    write!(output, "\"{}\"", field_str)?;
     Ok(())
 }
 
@@ -666,4 +587,108 @@ impl<'a> SavTestRecord for StringTable<'a> {
         }
         Ok(())
     }
+}
+
+fn process_hl_block(
+    hl1_block: &HlBlock,
+    output: &mut String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let hl1_block_start = hl1_block.block_offset;
+    let hl1_block_reader = BytesReader::new(hl1_block.block_bytes);
+    let hl1_block_header = Hl1BlockHeader::parse(&hl1_block_reader)?;
+    hl1_block_header.record("", output)?;
+    hl1_block_header.validate();
+    let tokens = StringTable::parse(&hl1_block_reader)?;
+    tokens.record("", output)?;
+
+    let offset = hl1_block_reader.position() as usize;
+    writeln!(
+        output,
+        "Current HL1 Block Offset (Relative): {} (0x{:X})",
+        offset, offset
+    )?;
+    writeln!(
+        output,
+        "Current HL1 Block Offset: {} (0x{:X})",
+        hl1_block_start + offset,
+        hl1_block_start + offset
+    )?;
+
+    let mut num_etables = 0;
+    for _ in 0..hl1_block_header.expected_num_etables {
+        //let etable_struct = read_struct(&hl1_block_reader, Some("ETABLE"), &tokens, &mut output)?;
+        let etable = EntityTable::parse(&hl1_block_reader, &tokens)?;
+        etable.record("", output)?;
+        num_etables += 1;
+    }
+    writeln!(output, "num_etables: {} ({})", num_etables, num_etables)?;
+    assert_eq!(num_etables, hl1_block_header.expected_num_etables);
+
+    let (_, save_header) = read_struct(&hl1_block_reader, Some("Save Header"), &tokens, output)?;
+    let connection_count = read_u32_field(&save_header, "connectionCount").unwrap();
+    for _ in 0..connection_count {
+        let (_, adjacency_data) =
+            read_struct(&hl1_block_reader, Some("ADJACENCY"), &tokens, output)?;
+    }
+
+    // Read "LIGHTSTYLE" structs
+    let light_style_count = read_u32_field(&save_header, "lightStyleCount").unwrap();
+    for _ in 0..light_style_count {
+        let (_, light_style) = read_struct(&hl1_block_reader, Some("LIGHTSTYLE"), &tokens, output)?;
+    }
+
+    // Read "ENTVARS" structs
+    let entity_count = read_u32_field(&save_header, "entityCount").unwrap();
+    //println!("entity_count: {}", entity_count);
+    //println!("num_etables: {}", num_etables);
+    let mut current_entity: Option<Vec<(&str, Vec<(&str, &[u8])>)>> = None;
+    let mut entities = Vec::with_capacity(entity_count as usize);
+    while entities.len() < entity_count as usize {
+        //let offset = hl1_block_reader.position() + hl1_block_start;
+        //println!("  offset: 0x{:X}", offset);
+        let (ty, entity_vars) = match read_struct(&hl1_block_reader, None, &tokens, output) {
+            Ok(result) => result,
+            Err(error) => {
+                writeln!(output, "ERROR: {}", error)?;
+                break;
+            }
+        };
+        if ty == "ENTVARS" {
+            if let Some(current_entity) = current_entity.take() {
+                entities.push(current_entity);
+            }
+        }
+        if let Some(current_entity) = current_entity.as_mut() {
+            current_entity.push((ty, entity_vars));
+        } else {
+            let mut entity_fragments = Vec::new();
+            entity_fragments.push((ty, entity_vars));
+            current_entity = Some(entity_fragments);
+        }
+    }
+    writeln!(output, "Entities:")?;
+    for entity in &entities {
+        // The first should be ENTVARS which should have a class name
+        let class_name = read_str_field(&entity[0].1, "classname")?;
+        writeln!(output, "  {}", class_name)?;
+        for fragment in entity {
+            writeln!(output, "    {}", fragment.0)?;
+            record_fields(&fragment.1, "      ", output)?;
+        }
+    }
+
+    let offset = hl1_block_reader.position() as usize;
+    writeln!(
+        output,
+        "Current HL1 Block Offset (Relative): {} (0x{:X})",
+        offset, offset
+    )?;
+    writeln!(
+        output,
+        "Current HL1 Block Offset: {} (0x{:X})",
+        hl1_block_start + offset,
+        hl1_block_start + offset
+    )?;
+
+    Ok(())
 }
