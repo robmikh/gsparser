@@ -6,11 +6,7 @@ use gsparser::{
     bsp::{BspEntity, BspReader},
     mdl::null_terminated_bytes_to_str,
 };
-use std::{
-    borrow::Cow,
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-};
+use std::{borrow::Cow, collections::HashMap, path::PathBuf};
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();

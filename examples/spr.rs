@@ -1,11 +1,8 @@
 use std::fmt::Write;
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
-use gsparser::mdl::{MdlFile, null_terminated_bytes_to_str};
+use gsparser::mdl::null_terminated_bytes_to_str;
 use gsparser::spr::SprFile;
-use id_tree::InsertBehavior::AsRoot;
-use id_tree::InsertBehavior::UnderNode;
-use id_tree::TreeBuilder;
 
 pub fn resolve_string_bytes<'a>(bytes: &'a [u8]) -> std::borrow::Cow<'a, str> {
     match null_terminated_bytes_to_str(bytes) {
@@ -13,7 +10,7 @@ pub fn resolve_string_bytes<'a>(bytes: &'a [u8]) -> std::borrow::Cow<'a, str> {
         Err(error) => {
             //println!("  WARNING: {:?}", error);
             let start = error.str_error.valid_up_to();
-            let end = start + error.str_error.error_len().unwrap_or(1);
+            let _end = start + error.str_error.error_len().unwrap_or(1);
             //println!("           error bytes: {:?}", &bytes[start..end]);
             String::from_utf8_lossy(&bytes[..error.end])
         }

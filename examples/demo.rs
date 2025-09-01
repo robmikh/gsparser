@@ -9,7 +9,7 @@ pub fn resolve_string_bytes<'a>(bytes: &'a [u8]) -> std::borrow::Cow<'a, str> {
         Err(error) => {
             //println!("  WARNING: {:?}", error);
             let start = error.str_error.valid_up_to();
-            let end = start + error.str_error.error_len().unwrap_or(1);
+            let _end = start + error.str_error.error_len().unwrap_or(1);
             //println!("           error bytes: {:?}", &bytes[start..end]);
             String::from_utf8_lossy(&bytes[..error.end])
         }
@@ -58,13 +58,13 @@ fn main() {
         let description = null_terminated_bytes_to_str(&entry.description).unwrap();
         println!("  {}", description);
         let mut last_frame = 0;
-        for (i, frame) in frames.iter().enumerate() {
+        for (_i, frame) in frames.iter().enumerate() {
             if last_frame != frame.header.frame {
                 println!();
             }
             match &frame.data {
-                DemoFrameData::NetMsg((frame_ty, data)) => {
-                    let sky_name =
+                DemoFrameData::NetMsg((_frame_ty, data)) => {
+                    let _sky_name =
                         null_terminated_bytes_to_str(&data.prefix.info.move_vars.sky_name).unwrap();
                     let side_move = data.prefix.info.user_cmd.sidemove;
                     let forward_move = data.prefix.info.user_cmd.forwardmove;
@@ -88,9 +88,9 @@ fn main() {
                     println!("    {} - Client Data - {:?}", frame.header.frame, position);
                 }
                 DemoFrameData::NextSection => todo!(),
-                DemoFrameData::Event(event_data) => todo!(),
-                DemoFrameData::WeaponAnim(weapon_anim_data) => todo!(),
-                DemoFrameData::Sound(sound_data) => {
+                DemoFrameData::Event(_event_data) => todo!(),
+                DemoFrameData::WeaponAnim(_weapon_anim_data) => todo!(),
+                DemoFrameData::Sound(_sound_data) => {
                     println!("    {} - Sound Data", frame.header.frame)
                 }
                 DemoFrameData::DemoBuffer(demo_buffer_data) => {

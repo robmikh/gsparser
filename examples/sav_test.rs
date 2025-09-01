@@ -89,47 +89,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
 
-                /*
-                let mut map_entities_iter = entities.iter();
-                let mut sav_entities_iter = data.entities.iter();
-                while let Some((sav_entity, _)) = sav_entities_iter.next() {
-                    let should_skip = |class_name: &str| -> bool {
-                        // Some of these we skip because they are never present at runtime (e.g. lights).
-                        // Others we skip becuase they aren't represented in the map (e.g. player).
-                        // The last category we skip are entities that can be removed at runtime (e.g. trigger_once).
-                        // POSTMORTEM: Nearly every entity can be removed at runtime... this won't work. It's probably the case
-                        //             that when loading a save file in Half-Life, no entities are spawned via the information
-                        //             in the bsp. Instead, all information about what entities to spawn and what their properties
-                        //             are are in the save file. Unless this information is in other parts of the save file...
-                        match class_name {
-                            "light" | "player" | "light_spot" | "info_node" | "trigger_once" | "trigger_auto" | "item_suit" | "func_breakable" | "env_explosion" | "env_shooter" | "scripted_sentence" => true,
-                            _ => false,
-                        }
-                    };
-                    if should_skip(&sav_entity) {
-                        continue;
-                    }
-
-                    let mut found_match = false;
-                    while let Some(map_entity) = map_entities_iter.next() {
-                        let map_entity_class_name = map_entity.0["classname"];
-                        // Skip-able
-                        if should_skip(&map_entity_class_name) {
-                            continue;
-                        }
-                        if map_entity_class_name == sav_entity.as_str() {
-                            found_match = true;
-                            break;
-                        } else {
-                            panic!("Unskippable entity \"{}\" found when looking for \"{}\"!", map_entity_class_name, sav_entity);
-                        }
-                    }
-                    if !found_match {
-                        panic!("Match not found!");
-                    }
-                }
-                */
-
                 let sav_block_folder_path = {
                     let mut path = output_path.clone();
                     path.push(sav_path.file_name().unwrap().to_str().unwrap());
@@ -180,9 +139,9 @@ struct SavData {
     map_name: String,
     num_entries: usize,
     num_world_spawns: usize,
-    entries: Vec<(usize, String)>,
+    _entries: Vec<(usize, String)>,
     world_spawn_indices: Vec<usize>,
-    entities: Vec<(String, Vec<(String, Vec<(String, Vec<u8>)>)>)>,
+    _entities: Vec<(String, Vec<(String, Vec<(String, Vec<u8>)>)>)>,
     hl_block_outputs: Vec<(String, String)>,
 }
 
@@ -365,35 +324,13 @@ fn process_path<P: AsRef<Path>>(
     let num_entries = entries.len();
     let num_world_spawns = world_spawn_indices.len();
 
-    /*
-    let entities = {
-        let mut new_entities = Vec::with_capacity(entities.len());
-        for fragments in entities {
-            // Read class name
-            let class_name = read_str_field(&fragments[0].1, "classname")?.to_owned();
-
-            let mut new_fragments = Vec::with_capacity(fragments.len());
-            for (fragment_name, fields) in fragments {
-                let mut new_fields = Vec::with_capacity(fields.len());
-                for (field_name, field_data) in fields {
-                    new_fields.push((field_name.to_owned(), field_data.to_vec()));
-                }
-                new_fragments.push((fragment_name.to_owned(), new_fields));
-            }
-
-            new_entities.push((class_name, new_fragments));
-        }
-        new_entities
-    };
-    */
-
     Ok(SavData {
         map_name: map_name.to_owned(),
         num_entries,
         num_world_spawns,
-        entries,
+        _entries: entries,
         world_spawn_indices,
-        entities: Vec::new(),
+        _entities: Vec::new(),
         hl_block_outputs,
     })
 }
@@ -410,75 +347,6 @@ fn resolve_map_entity_string<'a>(reader: &'a BspReader) -> Cow<'a, str> {
             String::from_utf8_lossy(&entities_bytes[..error.end])
         }
     }
-}
-
-fn read_struct<'a, 'b>(
-    reader: &'b BytesReader<'b>,
-    expected_name: Option<&str>,
-    string_table: &'a StringTable<'a>,
-    output: &mut String,
-) -> Result<(&'a str, Vec<(&'a str, &'b [u8])>), Box<dyn std::error::Error>> {
-    let always_4 = reader.read_u16_le()?;
-    assert_eq!(always_4, 4);
-    let token_offset = reader.read_u16_le()?;
-    let token = string_table.get(token_offset as u32).unwrap();
-    //assert_eq!(token, expected_name);
-    if let Some(expected_name) = expected_name {
-        if token != expected_name {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Expected \"{}\", found \"{}\"!", expected_name, token),
-            )));
-        }
-    }
-    writeln!(output, "\"{}\":", token)?;
-    let fields_saved = reader.read_u16_le()?;
-    writeln!(output, "  Fields: {} (0x{:X})", fields_saved, fields_saved)?;
-    // Not what this short is for
-    let unknown = reader.read_u16_le()?;
-    assert_eq!(unknown, 0);
-
-    // Read each field
-    let mut fields = Vec::with_capacity(fields_saved as usize);
-    for _ in 0..fields_saved {
-        let payload_size = reader.read_u16_le()?;
-        let token_offset = reader.read_u16_le()?;
-        let token = string_table.get(token_offset as u32).unwrap();
-
-        let payload = reader.read(payload_size as usize)?;
-        fields.push((token, payload));
-    }
-    for (field_name, payload) in &fields {
-        writeln!(output, "    \"{}\" {:02X?}", field_name, payload)?;
-    }
-
-    Ok((token, fields))
-}
-
-fn get_field<'a, 'b>(save_struct: &'a [(&str, &'b [u8])], field_name: &str) -> Option<&'b [u8]> {
-    let bytes = save_struct
-        .iter()
-        .find(|(name, _)| *name == field_name)
-        .map(|(_, bytes)| bytes)?;
-    Some(bytes)
-}
-
-fn read_u32_field(save_struct: &[(&str, &[u8])], field_name: &str) -> Option<u32> {
-    let field_bytes_source = get_field(save_struct, field_name)?;
-    let mut field_bytes = [0u8; 4];
-    field_bytes.copy_from_slice(field_bytes_source);
-    let connection_count = u32::from_le_bytes(field_bytes);
-    Some(connection_count)
-}
-
-fn read_str_field<'a>(
-    save_struct: &'a [(&str, &[u8])],
-    field_name: &str,
-) -> Result<&'a str, Box<dyn std::error::Error>> {
-    let field_bytes = get_field(save_struct, field_name).unwrap();
-    let field_str_end = find_next_null(&field_bytes, 0).unwrap_or(field_bytes.len());
-    let field_str = str::from_utf8(&field_bytes[0..field_str_end])?;
-    Ok(field_str)
 }
 
 fn read_str<'a>(bytes: &'a [u8]) -> Result<&'a str, Box<dyn std::error::Error>> {
@@ -549,15 +417,6 @@ fn record_u32_field<'a>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let value = read_u32(field_data)?;
     write!(output, "{} (0x{:X})", value, value)?;
-    Ok(())
-}
-
-fn record_f32_field<'a>(
-    field_data: &'a [u8],
-    output: &mut String,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let value = read_f32(field_data)?;
-    write!(output, "{:.2}", value)?;
     Ok(())
 }
 
