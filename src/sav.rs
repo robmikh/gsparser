@@ -57,6 +57,13 @@ impl<'a> BytesReader<'a> {
         Ok(&self.bytes[start..end])
     }
 
+    pub fn read_to_end(&self) -> std::io::Result<&'a [u8]> {
+        let start = self.position();
+        let end = self.bytes.len();
+        self.current.store(end, Ordering::SeqCst);
+        Ok(&self.bytes[start..end])
+    }
+
     pub fn read_and_copy<const N: usize>(&self) -> std::io::Result<[u8; N]> {
         let bytes = self.read(N)?;
         let mut result = [0u8; N];
@@ -72,6 +79,17 @@ impl<'a> BytesReader<'a> {
     pub fn read_u32_le(&self) -> std::io::Result<u32> {
         let bytes = self.read_and_copy::<4>()?;
         Ok(u32::from_le_bytes(bytes))
+    }
+
+    pub fn read_f32_le(&self) -> std::io::Result<f32> {
+        let bytes = self.read_and_copy::<4>()?;
+        Ok(f32::from_le_bytes(bytes))
+    }
+
+    pub fn read_null_terminated_str(&self) -> std::io::Result<&str> {
+        let bytes = self.read_until_null()?;
+        let result = str::from_utf8(bytes).into_io()?;
+        Ok(result)
     }
 }
 
@@ -208,9 +226,44 @@ impl<'a> SavFieldValue<'a> for u32 {
     }
 }
 
+impl<'a> SavFieldValue<'a> for f32 {
+    fn parse(reader: &BytesReader<'a>) -> std::io::Result<Self> {
+        reader.read_f32_le()
+    }
+
+    fn record(&self, output: &mut String) -> std::fmt::Result {
+        write!(output, "{}", self)
+    }
+}
+
+impl<'a> SavFieldValue<'a> for &'a [u8] {
+    fn parse(reader: &BytesReader<'a>) -> std::io::Result<Self> {
+        let bytes = reader.read_to_end()?;
+        Ok(bytes)
+    }
+
+    fn record(&self, output: &mut String) -> std::fmt::Result {
+        write!(output, "{:?} ({:02X?})", self, self)
+    }
+}
+
 impl<'a, const N: usize> SavFieldValue<'a> for [u8; N] {
     fn parse(reader: &BytesReader<'a>) -> std::io::Result<Self> {
         reader.read_and_copy()
+    }
+
+    fn record(&self, output: &mut String) -> std::fmt::Result {
+        write!(output, "{:02X?}", self)
+    }
+}
+
+impl<'a, const N: usize> SavFieldValue<'a> for [f32; N] {
+    fn parse(reader: &BytesReader<'a>) -> std::io::Result<Self> {
+        let mut result = [0.0f32; N];
+        for i in 0..N {
+            result[i] = reader.read_f32_le()?;
+        }
+        Ok(result)
     }
 
     fn record(&self, output: &mut String) -> std::fmt::Result {
@@ -296,7 +349,7 @@ macro_rules! sav_tagged_struct{
             pub fn record(&self, prefix: &str, output: &mut String) -> std::fmt::Result {
                 writeln!(output, "{}{} ({}):", prefix, stringify!($struct_name), $struct_tag)?;
                 $(
-                    if let Some($field_name) = self.$field_name {
+                    if let Some($field_name) = &self.$field_name {
                         write!(output, "{}  {}: ", prefix, stringify!($field_name))?;
                         $field_name.record(output)?;
                         writeln!(output)?;
@@ -371,12 +424,127 @@ sav_tagged_struct! {
 }
 
 sav_tagged_struct! {
+    Hl1SaveHeader ("Save Header") {
+        skill_level ("skillLevel"): u32,
+        entity_count ("entityCount"): u32,
+        connection_count ("connectionCount"): u32,
+        light_style_count ("lightStyleCount"): u32,
+        time ("time"): u32,
+        map_name ("mapName"): &'a str,
+        sky_name ("skyName"): &'a str,
+        sky_color_r ("skyColor_r"): &'a [u8],
+        sky_color_g ("skyColor_g"): &'a [u8],
+        sky_color_b ("skyColor_b"): &'a [u8],
+        sky_vec_x ("skyVec_x"): f32,
+        sky_vec_y ("skyVec_y"): f32,
+        sky_vec_z ("skyVec_z"): f32
+    }
+}
+
+sav_tagged_struct! {
+    Adjacency ("ADJACENCY") {
+        map_name ("mapName"): &'a str,
+        landmark_name ("landmarkName"): &'a str,
+        pent_landmark ("pentLandmark"): u32,
+        vec_landmark_origin ("vecLandmarkOrigin"): [f32; 3]
+    }
+}
+
+sav_tagged_struct! {
     EntityTable ("ETABLE") {
         location ("location"): u32,
         size ("size"): u32,
         class_name ("classname"): &'a str,
         flags ("flags"): u32,
         id ("id"): u32
+    }
+}
+
+sav_tagged_struct! {
+    LightStyle ("LIGHTSTYLE") {
+        style ("style"): &'a str,
+        index ("index"): u32
+    }
+}
+
+sav_tagged_struct! {
+    EntVars ("ENTVARS") {
+        class_name ("classname"): &'a str,
+        model_index ("modelindex"): u32,
+        model ("model"): &'a str,
+        abs_min ("absmin"): [f32; 3],
+        abs_max ("absmax"): [f32; 3],
+        mins ("mins"): [f32; 3],
+        maxs ("maxs"): [f32; 3],
+        size ("size"): [f32; 3],
+        l_time ("ltime"): u32,
+        next_think ("nextthink"): u32,
+        solid ("solid"): u32,
+        move_type ("move_type"): u32,
+        flags ("flags"): u32
+    }
+}
+
+pub struct UnknownTaggedStruct<'a, 'b> {
+    pub tag: &'b str,
+    pub fields: Vec<(&'b str, &'a [u8])>,
+}
+
+impl<'a, 'b> UnknownTaggedStruct<'a, 'b> {
+    pub fn parse(
+        reader: &'a BytesReader<'a>,
+        string_table: &'b StringTable<'b>,
+    ) -> std::io::Result<Self> {
+        let always_4 = reader.read_u16_le()?;
+        assert_eq!(always_4, 4);
+
+        let token_offset = reader.read_u16_le()?;
+        let token = string_table.get(token_offset as u32).unwrap();
+
+        let fields_saved = reader.read_u16_le()?;
+        // Not what this short is for
+        let unknown = reader.read_u16_le()?;
+        assert_eq!(unknown, 0);
+
+        // Read each field
+        let mut fields = Vec::with_capacity(fields_saved as usize);
+        for _ in 0..fields_saved {
+            let payload_size = reader.read_u16_le()?;
+            let token_offset = reader.read_u16_le()?;
+            let field_token = string_table.get(token_offset as u32).unwrap();
+            let payload = reader.read(payload_size as usize)?;
+            fields.push((field_token, payload));
+        }
+
+        Ok(Self { tag: token, fields })
+    }
+
+    pub fn record(&self, prefix: &str, output: &mut String) -> std::fmt::Result {
+        writeln!(output, "{}{}:", prefix, self.tag)?;
+        for (field_name, field_data) in &self.fields {
+            writeln!(
+                output,
+                "{}  {}: {:?} ({:02X?})",
+                prefix, field_name, field_data, field_data
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn get(&self, field_name: &str) -> Option<&[u8]> {
+        self.fields
+            .iter()
+            .find(|(name, _)| *name == field_name)
+            .map(|(_, data)| *data)
+    }
+
+    pub fn get_str(&'a self, field_name: &str) -> std::io::Result<Option<Cow<'a, str>>> {
+        if let Some(field_data) = self.get(field_name) {
+            let reader = BytesReader::new(&field_data);
+            Ok(Some(Cow::parse(&reader)?))
+        } else {
+            Ok(None)
+        }
     }
 }
 

@@ -8,8 +8,9 @@ use gsparser::{
     bsp::{BspEntity, BspReader},
     mdl::null_terminated_bytes_to_str,
     sav::{
-        BytesReader, EntityTable, GameHeader, GlobalEntity, Globals, Hl1BlockHeader, HlBlock,
-        SavHeader, StringTable, find_next_null,
+        Adjacency, BytesReader, EntityTable, GameHeader, GlobalEntity, Globals, Hl1BlockHeader,
+        Hl1SaveHeader, HlBlock, LightStyle, SavHeader, StringTable, UnknownTaggedStruct,
+        find_next_null,
     },
 };
 
@@ -262,7 +263,7 @@ fn process_path<P: AsRef<Path>>(
         {
             let output = &mut output;
             if hl_block.name.ends_with("HL1") {
-                process_hl_block(&hl_block, output)?;
+                process_hl1_block(&hl_block, output)?;
             }
         }
         hl_block_outputs.push((hl_block.name.to_owned(), output));
@@ -509,9 +510,8 @@ fn record_fields<'a>(
         write!(output, "{}{}: ", prefix, field_name)?;
         match *field_name {
             "message" => record_lossy_str_field(field_data, output)?,
-            "classname" | "model" | "netname" | "targetname" => {
-                record_str_field(field_data, output)?
-            }
+            "classname" | "model" | "netname" | "targetname" | "m_szMapName"
+            | "m_szLandmarkName" => record_str_field(field_data, output)?,
             "modelindex" | "spawnflags" | "flags" | "skillLevel" | "entityCount" => {
                 record_u32_field(field_data, output)?
             }
@@ -602,7 +602,7 @@ impl<'a> SavTestRecord for StringTable<'a> {
     }
 }
 
-fn process_hl_block(
+fn process_hl1_block(
     hl1_block: &HlBlock,
     output: &mut String,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -629,64 +629,82 @@ fn process_hl_block(
 
     let mut num_etables = 0;
     for _ in 0..hl1_block_header.expected_num_etables {
-        //let etable_struct = read_struct(&hl1_block_reader, Some("ETABLE"), &tokens, &mut output)?;
         let etable = EntityTable::parse(&hl1_block_reader, &tokens)?;
         etable.record("", output)?;
         num_etables += 1;
     }
-    writeln!(output, "num_etables: {} ({})", num_etables, num_etables)?;
+    writeln!(output, "num_etables: {} (0x{:X})", num_etables, num_etables)?;
     assert_eq!(num_etables, hl1_block_header.expected_num_etables);
 
-    let (_, save_header) = read_struct(&hl1_block_reader, Some("Save Header"), &tokens, output)?;
-    let connection_count = read_u32_field(&save_header, "connectionCount").unwrap();
+    //let (_, save_header) = read_struct(&hl1_block_reader, Some("Save Header"), &tokens, output)?;
+    let save_header = Hl1SaveHeader::parse(&hl1_block_reader, &tokens)?;
+    save_header.record("", output)?;
+    //let connection_count = read_u32_field(&save_header, "connectionCount").unwrap();
+    let connection_count = save_header.connection_count.unwrap();
     for _ in 0..connection_count {
-        let (_, adjacency_data) =
-            read_struct(&hl1_block_reader, Some("ADJACENCY"), &tokens, output)?;
+        //let (_, adjacency_data) =
+        //    read_struct(&hl1_block_reader, Some("ADJACENCY"), &tokens, output)?;
+        let adjacency_data = Adjacency::parse(&hl1_block_reader, &tokens)?;
+        adjacency_data.record("", output)?;
     }
 
     // Read "LIGHTSTYLE" structs
-    let light_style_count = read_u32_field(&save_header, "lightStyleCount").unwrap();
+    //let light_style_count = read_u32_field(&save_header, "lightStyleCount").unwrap();
+    let light_style_count = save_header.light_style_count.unwrap();
     for _ in 0..light_style_count {
-        let (_, light_style) = read_struct(&hl1_block_reader, Some("LIGHTSTYLE"), &tokens, output)?;
+        //let (_, light_style) = read_struct(&hl1_block_reader, Some("LIGHTSTYLE"), &tokens, output)?;
+        let light_style = LightStyle::parse(&hl1_block_reader, &tokens)?;
+        light_style.record("", output)?;
     }
 
     // Read "ENTVARS" structs
-    let entity_count = read_u32_field(&save_header, "entityCount").unwrap();
+    //let entity_count = read_u32_field(&save_header, "entityCount").unwrap();
+    let entity_count = save_header.entity_count.unwrap();
     //println!("entity_count: {}", entity_count);
     //println!("num_etables: {}", num_etables);
-    let mut current_entity: Option<Vec<(&str, Vec<(&str, &[u8])>)>> = None;
+    let mut current_entity: Option<Vec<UnknownTaggedStruct>> = None;
     let mut entities = Vec::with_capacity(entity_count as usize);
     while entities.len() < entity_count as usize {
         //let offset = hl1_block_reader.position() + hl1_block_start;
         //println!("  offset: 0x{:X}", offset);
-        let (ty, entity_vars) = match read_struct(&hl1_block_reader, None, &tokens, output) {
+        //let (ty, entity_vars) = match read_struct(&hl1_block_reader, None, &tokens, output) {
+        //    Ok(result) => result,
+        //    Err(error) => {
+        //        writeln!(output, "ERROR: {}", error)?;
+        //        break;
+        //    }
+        //};
+        let entity_vars = match UnknownTaggedStruct::parse(&hl1_block_reader, &tokens) {
             Ok(result) => result,
             Err(error) => {
                 writeln!(output, "ERROR: {}", error)?;
                 break;
             }
         };
-        if ty == "ENTVARS" {
+        if entity_vars.tag == "ENTVARS" {
             if let Some(current_entity) = current_entity.take() {
                 entities.push(current_entity);
             }
         }
         if let Some(current_entity) = current_entity.as_mut() {
-            current_entity.push((ty, entity_vars));
+            current_entity.push(entity_vars);
         } else {
             let mut entity_fragments = Vec::new();
-            entity_fragments.push((ty, entity_vars));
+            entity_fragments.push(entity_vars);
             current_entity = Some(entity_fragments);
         }
     }
-    writeln!(output, "Entities:")?;
+    writeln!(output, "Entities ({}):", entities.len())?;
     for entity in &entities {
         // The first should be ENTVARS which should have a class name
-        let class_name = read_str_field(&entity[0].1, "classname")?;
+        let class_name = &entity[0].get_str("classname")?.unwrap();
+        //let class_name = read_str_field(&entity[0].1, "classname")?;
         writeln!(output, "  {}", class_name)?;
+
         for fragment in entity {
-            writeln!(output, "    {}", fragment.0)?;
-            record_fields(&fragment.1, "      ", output)?;
+            //fragment.record("    ", output)?;
+            writeln!(output, "    {}", fragment.tag)?;
+            record_fields(&fragment.fields, "      ", output)?;
         }
     }
 
