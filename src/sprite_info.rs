@@ -41,7 +41,7 @@ impl SpriteInfoFile {
         let mut infos = Vec::with_capacity(num_sprites);
         for line in &mut lines {
             let line = line.trim();
-            if !line.is_empty() {
+            if !line.is_empty() && !line.starts_with("//") {
                 if infos.len() >= num_sprites {
                     panic!("More text than expected!");
                 }

@@ -87,18 +87,28 @@ impl SprFile {
         bytes: &[u8],
     ) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
         assert_eq!(bytes.len(), width as usize * height as usize);
-
-        // https://developer.valvesoftware.com/wiki/SPR
-        let transparent_index = if self.header.text_format == 3 {
-            Some(self.header.palette_color_count as usize - 1)
-        } else {
-            None
-        };
-
+        let last_index = self.header.palette_color_count as usize - 1;
         let mut new_pixels = Vec::with_capacity(width as usize * height as usize * 4);
         for pixel in bytes {
             let pixel = *pixel as usize;
-            let is_transparent = transparent_index.map(|x| x == pixel).unwrap_or(false);
+            // https://developer.valvesoftware.com/wiki/SPR
+            let is_transparent = match self.header.text_format {
+                // Normal
+                0 => false,
+                // Additive
+                1 => {
+                    let color = self.palette[pixel as usize];
+                    color[0] == 0 && color[1] == 0 && color[2] == 0
+                }
+                // Index Alpha
+                2 => todo!(),
+                // Alpha Test
+                3 => pixel == last_index,
+                _ => panic!(
+                    "Unknown spr text_format in header! {}",
+                    self.header.text_format
+                ),
+            };
             if !is_transparent {
                 let color = self.palette[pixel];
                 new_pixels.push(color[0]);

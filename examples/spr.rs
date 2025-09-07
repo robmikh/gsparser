@@ -21,10 +21,14 @@ fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let game_root = args.get(0).unwrap();
     let sprite_name = args.get(1).unwrap();
+    let sprite_folder = args.get(2);
 
     let sprite_path = {
         let mut path = PathBuf::from(game_root);
         path.push("sprites");
+        if let Some(sprite_folder) = sprite_folder {
+            path.push(sprite_folder);
+        }
         path.push(sprite_name);
         path.set_extension("spr");
         path
