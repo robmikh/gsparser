@@ -70,11 +70,12 @@ fn main() {
                     let forward_move = data.prefix.info.user_cmd.forwardmove;
                     let up_move = data.prefix.info.user_cmd.upmove;
                     let position = data.prefix.info.ref_params.view_org;
+                    let buttons = data.prefix.info.user_cmd.buttons;
                     //println!("{:#?}", data.prefix);
                     //println!("sky_name: {}", sky_name);
                     println!(
-                        "    {} - NetMsg - (forward, side, up) {}, {}, {}  position: {:?}",
-                        frame.header.frame, forward_move, side_move, up_move, position
+                        "    {} - NetMsg - (forward, side, up, buttons) {}, {}, {}, {:018b}  position: {:?}",
+                        frame.header.frame, forward_move, side_move, up_move, buttons, position
                     );
                 }
                 DemoFrameData::DemoStart => println!("    {} - Demo Start", frame.header.frame),
