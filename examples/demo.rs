@@ -92,8 +92,7 @@ fn main() {
                 DemoFrameData::Event(_event_data) => todo!(),
                 DemoFrameData::WeaponAnim(_weapon_anim_data) => todo!(),
                 DemoFrameData::Sound(sound_data) => {
-                    let sample =
-                        null_terminated_bytes_to_str(&sound_data.sample.data).unwrap();
+                    let sample = null_terminated_bytes_to_str(&sound_data.sample.data).unwrap();
                     println!("    {} - Sound Data - {}", frame.header.frame, sample)
                 }
                 DemoFrameData::DemoBuffer(demo_buffer_data) => {

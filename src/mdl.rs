@@ -11,6 +11,8 @@ use std::str;
 use byteorder::{LittleEndian, ReadBytesExt};
 use serde::Deserialize;
 
+use crate::path::PathPal;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 struct AnimationValueOffsets {
@@ -516,7 +518,7 @@ impl MdlFile {
         }
         let file_name = header.name_string();
 
-        let file_stem = mdl_path.file_stem().unwrap().to_str().unwrap().to_owned();
+        let file_stem = mdl_path.file_stem_pal().unwrap().to_owned();
 
         let (textures, skins) = if header.texture_count == 0 {
             let mut texture_mdl_path = mdl_path.to_owned();
@@ -738,12 +740,8 @@ impl MdlFile {
                 let sequence_group_file_name =
                     null_terminated_bytes_to_str(sequence_group.name()).unwrap();
                 let sequence_group_file_path = PathBuf::from(sequence_group_file_name);
-                let sequence_group_file_stem = sequence_group_file_path
-                    .file_stem()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .to_owned();
+                let sequence_group_file_stem =
+                    sequence_group_file_path.file_stem_pal().unwrap().to_owned();
 
                 animation_file_path.set_file_name(format!("{}.mdl", sequence_group_file_stem));
                 let bytes = std::fs::read(&animation_file_path)?;
