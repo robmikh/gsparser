@@ -522,7 +522,12 @@ impl MdlFile {
 
         let (textures, skins) = if header.texture_count == 0 {
             let mut texture_mdl_path = mdl_path.to_owned();
+            // Turns out the scientist's texture mdl file ends with 'T' and not 't'. No clue how
+            // Valve deals with this in GoldSrc when targeting Linux...
             texture_mdl_path.set_file_name(format!("{}t.mdl", file_stem));
+            if !texture_mdl_path.exists() {
+                texture_mdl_path.set_file_name(format!("{}T.mdl", file_stem));
+            }
             let texture_mdl_path = texture_mdl_path.into_os_string();
             let texture_mdl_path = texture_mdl_path.into_string().unwrap();
 
