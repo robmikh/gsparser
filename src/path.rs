@@ -3,14 +3,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-// Looks like std::path::Path is system specific. On macOS, using '\' instead of '/' in the path
-// causes file_name and file_stem to return the entire string.
+// Looks like std::path::Path is system specific. On macOS and Linux, using '\' instead of '/' in
+// the path causes file_name and file_stem to return the entire string.
 pub trait PathPal {
     fn file_stem_pal<'a>(&'a self) -> Option<Cow<'a, str>>;
     fn file_name_pal<'a>(&'a self) -> Option<Cow<'a, str>>;
 }
 
-#[cfg(not(target_vendor = "apple"))]
+#[cfg(not(target_family = "unix"))]
 impl PathPal for Path {
     fn file_stem_pal<'a>(&'a self) -> Option<Cow<'a, str>> {
         Some(Cow::Borrowed(self.file_stem()?.to_str()?))
@@ -21,7 +21,7 @@ impl PathPal for Path {
     }
 }
 
-#[cfg(target_vendor = "apple")]
+#[cfg(target_family = "unix")]
 impl PathPal for Path {
     fn file_stem_pal<'a>(&'a self) -> Option<Cow<'a, str>> {
         let base_str = self.to_str()?;
