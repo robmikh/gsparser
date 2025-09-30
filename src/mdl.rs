@@ -177,17 +177,17 @@ pub struct MdlBodyPart {
     pub models: Vec<MdlModel>,
 }
 
-#[repr(u32)]
-#[derive(Copy, Clone, Debug)]
-pub enum MdlTextureFlag {
-    None = 0,
-    Flat = 1,
-    Chrome = 2,
-    FullBright = 4,
-    MipMaps = 8,
-    Alpha = 16,
-    Additive = 32,
-    Masked = 64,
+bitflags::bitflags! {
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    pub struct MdlTextureFlag: u32 {
+        const FLAT = 0x01;
+        const CHROME = 0x02;
+        const FULL_BRIGHT = 0x04;
+        const MIP_MAPS = 0x08;
+        const ALPHA = 0x10;
+        const ADDITIVE = 0x20;
+        const MASKED = 0x40;
+    }
 }
 
 #[derive(Clone, Debug)]
