@@ -1,7 +1,4 @@
-use std::{
-    borrow::Cow,
-    path::{Path, PathBuf},
-};
+use std::{borrow::Cow, path::Path};
 
 // Looks like std::path::Path is system specific. On macOS and Linux, using '\' instead of '/' in
 // the path causes file_name and file_stem to return the entire string.
