@@ -12,6 +12,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use serde::Deserialize;
 
 use crate::path::PathPal;
+use crate::util::{NullTerminatedStrError, null_terminated_bytes_to_str};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -955,33 +956,6 @@ fn create_image(
         image_rgba_data,
     )
     .unwrap()
-}
-
-#[derive(Debug)]
-pub struct NullTerminatedStrError {
-    pub end: usize,
-    pub str_error: std::str::Utf8Error,
-}
-
-impl std::fmt::Display for NullTerminatedStrError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for NullTerminatedStrError {}
-
-pub fn null_terminated_bytes_to_str<'a>(
-    bytes: &'a [u8],
-) -> std::result::Result<&'a str, NullTerminatedStrError> {
-    let end = bytes.iter().position(|x| *x == 0).unwrap_or(bytes.len());
-    match std::str::from_utf8(&bytes[..end]) {
-        Ok(string) => Ok(string),
-        Err(err) => Err(NullTerminatedStrError {
-            end,
-            str_error: err,
-        }),
-    }
 }
 
 // TODO: This code is bananas, write a safer version

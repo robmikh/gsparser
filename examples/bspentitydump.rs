@@ -2,11 +2,11 @@ extern crate glob;
 extern crate gsparser;
 
 use glob::glob;
-use gsparser::{bsp::BspReader, mdl::null_terminated_bytes_to_str};
-use std::{borrow::Cow, env, path::PathBuf};
+use gsparser::{bsp::BspReader, util::resolve_map_entity_string};
+use std::path::PathBuf;
 
 fn main() {
-    let args = env::args().skip(1).collect::<Vec<_>>();
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
     let game_root = args.get(0).unwrap();
     let output_path = args.get(1).unwrap();
 
@@ -39,18 +39,4 @@ fn collect_maps(path: &str) -> Vec<PathBuf> {
         paths.push(bsp);
     }
     paths
-}
-
-fn resolve_map_entity_string<'a>(reader: &'a BspReader) -> Cow<'a, str> {
-    let entities_bytes = reader.read_entities();
-    match null_terminated_bytes_to_str(entities_bytes) {
-        Ok(entities) => Cow::Borrowed(entities),
-        Err(error) => {
-            println!("  WARNING: {:?}", error);
-            let start = error.str_error.valid_up_to();
-            let end = start + error.str_error.error_len().unwrap_or(1);
-            println!("           error bytes: {:?}", &entities_bytes[start..end]);
-            String::from_utf8_lossy(&entities_bytes[..error.end])
-        }
-    }
 }

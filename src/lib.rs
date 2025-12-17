@@ -11,4 +11,5 @@ pub mod sav;
 pub mod spr;
 pub mod sprite_info;
 pub mod steam;
+pub mod util;
 pub mod wad3;

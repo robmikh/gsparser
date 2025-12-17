@@ -1,21 +1,7 @@
 use std::path::PathBuf;
 
-use gsparser::mdl::null_terminated_bytes_to_str;
 use gsparser::spr::SprFile;
 use gsparser::sprite_info::SpriteInfoFile;
-
-pub fn resolve_string_bytes<'a>(bytes: &'a [u8]) -> std::borrow::Cow<'a, str> {
-    match null_terminated_bytes_to_str(bytes) {
-        Ok(entities) => std::borrow::Cow::Borrowed(entities),
-        Err(error) => {
-            //println!("  WARNING: {:?}", error);
-            let start = error.str_error.valid_up_to();
-            let _end = start + error.str_error.error_len().unwrap_or(1);
-            //println!("           error bytes: {:?}", &bytes[start..end]);
-            String::from_utf8_lossy(&bytes[..error.end])
-        }
-    }
-}
 
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();

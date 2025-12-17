@@ -1,22 +1,10 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use gsparser::mdl::{MdlFile, null_terminated_bytes_to_str};
+use gsparser::mdl::MdlFile;
+use gsparser::util::resolve_null_terminated_string;
 use id_tree::InsertBehavior::AsRoot;
 use id_tree::InsertBehavior::UnderNode;
 use id_tree::TreeBuilder;
-
-pub fn resolve_string_bytes<'a>(bytes: &'a [u8]) -> std::borrow::Cow<'a, str> {
-    match null_terminated_bytes_to_str(bytes) {
-        Ok(entities) => std::borrow::Cow::Borrowed(entities),
-        Err(error) => {
-            //println!("  WARNING: {:?}", error);
-            let start = error.str_error.valid_up_to();
-            let _end = start + error.str_error.error_len().unwrap_or(1);
-            //println!("           error bytes: {:?}", &bytes[start..end]);
-            String::from_utf8_lossy(&bytes[..error.end])
-        }
-    }
-}
 
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -83,7 +71,7 @@ fn main() {
                         let parent_node = bone_map.get(&(bone.parent as usize)).unwrap();
                         UnderNode(parent_node)
                     };
-                    let name = resolve_string_bytes(&bone.name);
+                    let name = resolve_null_terminated_string(&bone.name);
                     let bone_id = bone_tree
                         .insert(id_tree::Node::new(name.to_string()), behavior)
                         .unwrap();

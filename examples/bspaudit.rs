@@ -4,9 +4,9 @@ extern crate gsparser;
 use glob::glob;
 use gsparser::{
     bsp::{BspEntity, BspReader},
-    mdl::null_terminated_bytes_to_str,
+    util::resolve_map_entity_string,
 };
-use std::{borrow::Cow, cmp::Ordering, collections::HashMap, env, path::PathBuf};
+use std::{cmp::Ordering, collections::HashMap, env, path::PathBuf};
 
 fn main() {
     let args = env::args().skip(1).collect::<Vec<_>>();
@@ -74,19 +74,5 @@ fn print_entity_types(paths: &[PathBuf]) {
 
     for (entity_types, count) in sorted_types {
         println!("{:<16} -  {}", entity_types, count);
-    }
-}
-
-fn resolve_map_entity_string<'a>(reader: &'a BspReader) -> Cow<'a, str> {
-    let entities_bytes = reader.read_entities();
-    match null_terminated_bytes_to_str(entities_bytes) {
-        Ok(entities) => Cow::Borrowed(entities),
-        Err(error) => {
-            println!("  WARNING: {:?}", error);
-            let start = error.str_error.valid_up_to();
-            let end = start + error.str_error.error_len().unwrap_or(1);
-            println!("           error bytes: {:?}", &entities_bytes[start..end]);
-            String::from_utf8_lossy(&entities_bytes[..error.end])
-        }
     }
 }

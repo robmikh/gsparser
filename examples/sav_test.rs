@@ -1,17 +1,16 @@
 use std::{
-    borrow::Cow,
     fmt::Write,
     path::{Path, PathBuf},
 };
 
 use gsparser::{
     bsp::{BspEntity, BspReader},
-    mdl::null_terminated_bytes_to_str,
     sav::{
         Adjacency, BytesReader, EntityTable, GameHeader, GlobalEntity, Globals, Hl1BlockHeader,
         Hl1SaveHeader, HlBlock, LightStyle, SavHeader, StringTable, UnknownTaggedStruct,
         find_next_null,
     },
+    util::resolve_map_entity_string,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -333,20 +332,6 @@ fn process_path<P: AsRef<Path>>(
         _entities: Vec::new(),
         hl_block_outputs,
     })
-}
-
-fn resolve_map_entity_string<'a>(reader: &'a BspReader) -> Cow<'a, str> {
-    let entities_bytes = reader.read_entities();
-    match null_terminated_bytes_to_str(entities_bytes) {
-        Ok(entities) => Cow::Borrowed(entities),
-        Err(error) => {
-            println!("  WARNING: {:?}", error);
-            let start = error.str_error.valid_up_to();
-            let end = start + error.str_error.error_len().unwrap_or(1);
-            println!("           error bytes: {:?}", &entities_bytes[start..end]);
-            String::from_utf8_lossy(&entities_bytes[..error.end])
-        }
-    }
 }
 
 fn read_str<'a>(bytes: &'a [u8]) -> Result<&'a str, Box<dyn std::error::Error>> {

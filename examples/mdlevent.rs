@@ -1,20 +1,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use gsparser::mdl::{MdlFile, null_terminated_bytes_to_str};
-
-pub fn resolve_string_bytes<'a>(bytes: &'a [u8]) -> std::borrow::Cow<'a, str> {
-    match null_terminated_bytes_to_str(bytes) {
-        Ok(entities) => std::borrow::Cow::Borrowed(entities),
-        Err(error) => {
-            //println!("  WARNING: {:?}", error);
-            let start = error.str_error.valid_up_to();
-            let _end = start + error.str_error.error_len().unwrap_or(1);
-            //println!("           error bytes: {:?}", &bytes[start..end]);
-            String::from_utf8_lossy(&bytes[..error.end])
-        }
-    }
-}
+use gsparser::mdl::MdlFile;
+use gsparser::util::resolve_null_terminated_string;
 
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -43,7 +31,7 @@ fn main() {
         if events.is_empty() || is_movement_zero {
             continue;
         }
-        let animation_name = resolve_string_bytes(&sequence.name);
+        let animation_name = resolve_null_terminated_string(&sequence.name);
         println!(
             "  {} ({} fps) {:?}",
             animation_name, sequence.fps, sequence.linear_movement

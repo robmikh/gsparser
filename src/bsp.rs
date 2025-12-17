@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::mdl::null_terminated_bytes_to_str;
+use crate::util::null_terminated_bytes_to_str;
 
 macro_rules! enum_with_value {
     ($name:ident : $value_ty:ty { $($var_name:ident = $var_value:literal),* $(,)* }) => {
