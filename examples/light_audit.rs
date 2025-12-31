@@ -34,6 +34,7 @@ fn main() {
     let maps = collect_maps(&game_root);
 
     let mut light_types = HashMap::<String, (usize, HashSet<String>)>::new();
+    let mut max_light_styles = 0;
     for bsp_path in &maps {
         let map_name = bsp_path.file_stem().unwrap().to_str().unwrap();
         let data = std::fs::read(bsp_path).unwrap();
@@ -41,23 +42,31 @@ fn main() {
 
         let entity_string = resolve_map_entity_string(&reader);
         let entities = BspEntity::parse_entities(&entity_string);
+        let mut seen_light_styles = HashSet::new();
         for entity in &entities {
             let entity_type = *entity.0.get("classname").unwrap();
             if entity_type.starts_with("light") {
-                if entity.0.contains_key("style") {
-                    if let Some((count, seen_maps)) = light_types.get_mut(entity_type) {
-                        *count += 1;
-                        if !seen_maps.contains(map_name) {
-                            seen_maps.insert(map_name.to_owned());
+                if let Some(style) = entity.0.get("style") {
+                    if *style != "0" {
+                        if !seen_light_styles.contains(*style) {
+                            seen_light_styles.insert(style.to_owned());
                         }
-                    } else {
-                        let mut seen_maps = HashSet::new();
-                        seen_maps.insert(map_name.to_owned());
-                        light_types.insert(entity_type.to_owned(), (1, seen_maps));
+
+                        if let Some((count, seen_maps)) = light_types.get_mut(entity_type) {
+                            *count += 1;
+                            if !seen_maps.contains(map_name) {
+                                seen_maps.insert(map_name.to_owned());
+                            }
+                        } else {
+                            let mut seen_maps = HashSet::new();
+                            seen_maps.insert(map_name.to_owned());
+                            light_types.insert(entity_type.to_owned(), (1, seen_maps));
+                        }
                     }
                 }
             }
         }
+        max_light_styles = max_light_styles.max(seen_light_styles.len());
     }
 
     let mut sorted_types = light_types.into_iter().collect::<Vec<_>>();
@@ -71,6 +80,9 @@ fn main() {
     });
 
     let mut lights_string = String::new();
+    writeln!(&mut lights_string, "Max light styles: {}", max_light_styles).unwrap();
+    writeln!(&mut lights_string, "").unwrap();
+
     let mut maps_string = String::new();
     for (light_type, (count, seen_maps)) in sorted_types {
         writeln!(&mut lights_string, "{:<16} -  {}", light_type, count).unwrap();
