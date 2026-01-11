@@ -495,6 +495,14 @@ impl MdlHeader {
         let name_string = name_string.trim_matches(char::from(0));
         name_string.to_string()
     }
+
+    pub fn is_idst(&self) -> bool {
+        &self.id == b"IDST"
+    }
+
+    pub fn has_sequences(&self) -> bool {
+        self.anim_seq_count > 0
+    }
 }
 
 #[derive(Debug)]
