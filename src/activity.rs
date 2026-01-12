@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 #[repr(i32)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Activity {
     Reset = 0,
     Idle = 1,
