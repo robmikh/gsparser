@@ -843,7 +843,7 @@ impl MdlFile {
             hit_boxes.push(hit_box);
         }
 
-        // Animation evetns (per sequence)
+        // Animation events (per sequence)
         let animation_sequence_events: Vec<_> = sequences
             .iter()
             .map(|x| {

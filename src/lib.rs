@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod background;
 pub mod bsp;
 pub mod demo;
