@@ -1,4 +1,5 @@
 #[repr(i32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Activity {
     Reset = 0,
     Idle = 1,
