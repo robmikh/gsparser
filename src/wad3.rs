@@ -536,7 +536,8 @@ fn create_hl_decal_image(
     let mut image_rgba_data = Vec::<u8>::new();
     for palette_index in image_data {
         let index = (*palette_index as usize) * 3;
-        let alpha = 255 - palette_data[index + 0];
+        // TWHL says that the palette index equals the opacity
+        let alpha = index as u8;
 
         image_rgba_data.push(base_r_color);
         image_rgba_data.push(base_g_color);
