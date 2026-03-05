@@ -11,7 +11,7 @@ fn main() {
     let archive = WadArchive::open(wad_file);
 
     for file_info in &archive.files {
-        if file_info.name.starts_with("{shot") {
+        if file_info.name.starts_with("{shot") || file_info.name.starts_with("{blood") {
             let image_data = archive.decode_mipmaped_image_as_hl_decal(file_info).image;
             image_data
                 .save(format!("testoutput/decals/{}.png", &file_info.name))
