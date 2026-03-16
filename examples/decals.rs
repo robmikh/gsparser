@@ -1,7 +1,3 @@
-use std::fmt::Write;
-use std::path::PathBuf;
-
-use gsparser::spr::SprFile;
 use gsparser::wad3::WadArchive;
 
 fn main() {

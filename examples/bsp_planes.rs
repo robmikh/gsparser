@@ -8,7 +8,8 @@ fn main() {
     let reader = BspReader::read(file_bytes);
 
     let planes = reader.read_planes();
+    println!("Planes ({}):", planes.len());
     for plane in planes {
-        println!("{:?}", plane);
+        println!("  {:?}", plane);
     }
 }

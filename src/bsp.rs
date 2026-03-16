@@ -30,35 +30,35 @@ macro_rules! enum_with_value {
     };
 }
 
-const LUMP_ENTITIES: usize = 0;
-const LUMP_PLANES: usize = 1;
-const LUMP_TEXTURES: usize = 2;
-const LUMP_VERTICES: usize = 3;
-//const LUMP_VISIBILITY: usize = 4;
-const LUMP_NODES: usize = 5;
-const LUMP_TEXINFO: usize = 6;
-const LUMP_FACES: usize = 7;
-const LUMP_LIGHTING: usize = 8;
-const LUMP_CLIPNODES: usize = 9;
-const LUMP_LEAVES: usize = 10;
-const LUMP_MARKSURFACES: usize = 11;
-const LUMP_EDGES: usize = 12;
-const LUMP_SURFEDGES: usize = 13;
-const LUMP_MODELS: usize = 14;
-const HEADER_LUMPS: usize = 15;
+pub const LUMP_ENTITIES: usize = 0;
+pub const LUMP_PLANES: usize = 1;
+pub const LUMP_TEXTURES: usize = 2;
+pub const LUMP_VERTICES: usize = 3;
+pub const LUMP_VISIBILITY: usize = 4;
+pub const LUMP_NODES: usize = 5;
+pub const LUMP_TEXINFO: usize = 6;
+pub const LUMP_FACES: usize = 7;
+pub const LUMP_LIGHTING: usize = 8;
+pub const LUMP_CLIPNODES: usize = 9;
+pub const LUMP_LEAVES: usize = 10;
+pub const LUMP_MARKSURFACES: usize = 11;
+pub const LUMP_EDGES: usize = 12;
+pub const LUMP_SURFEDGES: usize = 13;
+pub const LUMP_MODELS: usize = 14;
+pub const HEADER_LUMPS: usize = 15;
 
 #[repr(C)]
 #[derive(Copy, Clone, Deserialize, Debug)]
-struct BspHeader {
-    version: i32,
-    lumps: [BspLumpHeader; HEADER_LUMPS],
+pub struct BspHeader {
+    pub version: i32,
+    pub lumps: [BspLumpHeader; HEADER_LUMPS],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Deserialize, Debug)]
-struct BspLumpHeader {
-    offset: i32,
-    len: i32,
+pub struct BspLumpHeader {
+    pub offset: i32,
+    pub len: i32,
 }
 
 #[repr(C)]
@@ -200,6 +200,10 @@ impl BspReader {
         let header: BspHeader = bincode::deserialize(&data).unwrap();
         assert_eq!(header.version, 30);
         Self { header, data }
+    }
+
+    pub fn header(&self) -> &BspHeader {
+        &self.header
     }
 
     pub fn read_nodes(&self) -> &[BspNode] {
