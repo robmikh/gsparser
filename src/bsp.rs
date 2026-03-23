@@ -341,13 +341,18 @@ impl<'a> BspTextureReader<'a> {
     }
 
     fn get_raw_data(&self, index: usize) -> Option<&'a [u8]> {
-        let offset = *self.offsets.get(index)? as usize;
-        let end = *self
-            .offsets
-            .get(index + 1)
-            .unwrap_or(&(self.lump_data.len() as i32)) as usize;
-        let data = &self.lump_data[offset..end];
-        Some(data)
+        let offset_i32 = *self.offsets.get(index)?;
+        if offset_i32 < 0 {
+            None
+        } else {
+            let offset = offset_i32 as usize;
+            let end = *self
+                .offsets
+                .get(index + 1)
+                .unwrap_or(&(self.lump_data.len() as i32)) as usize;
+            let data = &self.lump_data[offset..end];
+            Some(data)
+        }
     }
 }
 
