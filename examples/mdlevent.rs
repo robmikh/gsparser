@@ -43,17 +43,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut output = String::new();
 
                         writeln!(&mut output, "Sequences:")?;
+                        let mut write = false;
                         for (sequence, events) in file
                             .animation_sequences
                             .iter()
                             .zip(file.animation_sequence_events.iter())
                         {
-                            let is_movement_zero = sequence.linear_movement[0] == 0.0
-                                && sequence.linear_movement[1] == 0.0
-                                && sequence.linear_movement[2] == 0.0;
-                            if events.is_empty() || is_movement_zero {
+                            if events.is_empty() {
                                 continue;
                             }
+                            write = true;
                             let animation_name = resolve_null_terminated_string(&sequence.name);
                             writeln!(
                                 &mut output,
@@ -76,8 +75,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
 
-                        let output_file_path = output_path.join(format!("{}.txt", stem));
-                        std::fs::write(output_file_path, output)?;
+                        if write {
+                            let output_file_path = output_path.join(format!("{}.txt", stem));
+                            std::fs::write(output_file_path, output)?;
+                        }
                     } else {
                         println!("  Skipped!");
                     }
