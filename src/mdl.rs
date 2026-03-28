@@ -540,15 +540,15 @@ impl MdlFile {
             let texture_mdl_path = texture_mdl_path.into_os_string();
             let texture_mdl_path = texture_mdl_path.into_string().unwrap();
 
-            let file = File::open(texture_mdl_path).unwrap();
+            let file = File::open(texture_mdl_path)?;
             //let file_size = file.metadata().unwrap().len();
             let mut file = BufReader::new(file);
-            let texture_header: MdlHeader = bincode::deserialize_from(&mut file).unwrap();
+            let texture_header: MdlHeader = bincode::deserialize_from(&mut file)?;
 
             header.texture_count = texture_header.texture_count;
             header.texture_offset = texture_header.texture_offset;
             header.texture_data_index = texture_header.texture_data_index;
-            let textures = read_textures(&mut file, &texture_header);
+            let textures = read_textures(&mut file, &texture_header)?;
 
             header.skin_families_count = texture_header.skin_families_count;
             header.skin_offset = texture_header.skin_offset;
@@ -557,7 +557,7 @@ impl MdlFile {
 
             (textures, skins)
         } else {
-            let textures = read_textures(&mut file, &header);
+            let textures = read_textures(&mut file, &header)?;
             let skins = read_skins(&mut file, &header);
             (textures, skins)
         };
@@ -879,7 +879,10 @@ impl MdlFile {
     }
 }
 
-fn read_textures<T: Read + Seek>(mut reader: &mut T, header: &MdlHeader) -> Vec<MdlTexture> {
+fn read_textures<T: Read + Seek>(
+    mut reader: &mut T,
+    header: &MdlHeader,
+) -> Result<Vec<MdlTexture>, Box<dyn std::error::Error>> {
     if header.texture_count as i32 > 0 {
         //println!("{:#?}", header);
         //println!("{}", header.texture_count);
@@ -890,7 +893,7 @@ fn read_textures<T: Read + Seek>(mut reader: &mut T, header: &MdlHeader) -> Vec<
             .seek(SeekFrom::Start(header.texture_offset as u64))
             .unwrap();
         for _ in 0..num_textures {
-            let texture_header: TextureHeader = bincode::deserialize_from(&mut reader).unwrap();
+            let texture_header: TextureHeader = bincode::deserialize_from(&mut reader)?;
             texture_headers.push(texture_header);
         }
 
@@ -899,13 +902,11 @@ fn read_textures<T: Read + Seek>(mut reader: &mut T, header: &MdlHeader) -> Vec<
             let name_string = texture_header.name_string();
 
             let mut image_data = vec![0u8; (texture_header.width * texture_header.height) as usize];
-            reader
-                .seek(SeekFrom::Start(texture_header.offset as u64))
-                .unwrap();
-            reader.read_exact(image_data.as_mut_slice()).unwrap();
+            reader.seek(SeekFrom::Start(texture_header.offset as u64))?;
+            reader.read_exact(image_data.as_mut_slice())?;
 
             let mut palette_data = [0u8; 256 * 3];
-            reader.read_exact(&mut palette_data).unwrap();
+            reader.read_exact(&mut palette_data)?;
 
             let converted_image = create_image(
                 &image_data,
@@ -925,9 +926,9 @@ fn read_textures<T: Read + Seek>(mut reader: &mut T, header: &MdlHeader) -> Vec<
             });
         }
 
-        textures
+        Ok(textures)
     } else {
-        Vec::new()
+        Ok(Vec::new())
     }
 }
 
