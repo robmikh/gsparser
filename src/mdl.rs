@@ -307,6 +307,7 @@ pub enum AnimationEventType {
     SoundVoice = 1008,
     SentenceRnd1 = 1009,
     NotDead = 1010,
+    HudSound = 5004,
     Unknown(i32),
 }
 
@@ -328,6 +329,7 @@ impl<'de> Deserialize<'de> for AnimationEventType {
             1008 => AnimationEventType::SoundVoice,
             1009 => AnimationEventType::SentenceRnd1,
             1010 => AnimationEventType::NotDead,
+            5004 => AnimationEventType::HudSound,
             x => AnimationEventType::Unknown(x),
         };
         Ok(ty)
