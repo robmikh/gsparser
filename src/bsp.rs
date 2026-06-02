@@ -488,4 +488,8 @@ impl<'a> BspEntity<'a> {
         }
         entities
     }
+
+    pub fn classname(&self) -> Option<&str> {
+        self.0.get("classname").map(|x| *x)
+    }
 }
